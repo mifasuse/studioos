@@ -6,9 +6,16 @@ from __future__ import annotations
 
 from studioos.workflows import (  # noqa: F401
     amz_analyst,
+    amz_executor,
     amz_monitor,
     analyst_test,
     scout_test,
 )
 
-__all__ = ["scout_test", "analyst_test", "amz_monitor", "amz_analyst"]
+__all__ = [
+    "scout_test",
+    "analyst_test",
+    "amz_monitor",
+    "amz_analyst",
+    "amz_executor",
+]

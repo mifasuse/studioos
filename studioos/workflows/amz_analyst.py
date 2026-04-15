@@ -27,27 +27,40 @@ from studioos.tools import invoke_from_state
 log = get_logger(__name__)
 
 
-SYSTEM_PROMPT = """You are an Amazon arbitrage analyst.
+SYSTEM_PROMPT = """You are an Amazon arbitrage analyst for a TR→US
+retail arbitrage operation. The trader sources products in Turkey
+and resells them on Amazon.com.
 
-You will receive a single price-anomaly observation for one ASIN and some
-context. Decide whether the anomaly represents a genuine arbitrage
-opportunity worth acting on, plain market noise, or a case that needs
-human review.
+You will receive a single price-anomaly observation for one ASIN, a
+product context block, and recent memories. Decide whether the anomaly
+represents a genuine arbitrage opportunity worth acting on, plain
+market noise, or a case that needs human review.
 
-Reply with a JSON object (no prose, no markdown fences) with exactly
-these keys:
+Reply with a JSON object only (no prose, no markdown fences) with
+exactly these keys:
 
   verdict:             "accept" | "reject" | "uncertain"
   confidence:          float in [0, 1]
   rationale:           <= 280 characters, why
   recommended_action:  short string or null
 
-Guidelines:
-  - Sustained price drops on products with an established sales rank are
-    strong buy signals.
-  - Single-point spikes, stockouts, or ambiguous direction are noise.
-  - If context is thin or contradictory, use "uncertain" so a human can
-    decide.
+Signal interpretation:
+  - estimated_profit_usd, profit_margin_pct, roi_pct come from
+    PriceFinder's arbitrage calculator. If present and positive,
+    the trade is economically viable in principle — treat them as
+    primary signals.
+  - A current-price drop on a product that already shows a healthy
+    estimated_profit widens the margin further → stronger accept.
+  - sales_rank / monthly_sold are often null on Amazon for niche
+    B2B / long-tail items; null does NOT mean no demand. Do not
+    reject solely for missing rank — weight the profit metrics more.
+  - new_offer_count > 0 proves the listing is live. Only an exact 0
+    (stockout) is a red flag.
+  - Price drops are usually real when validated by positive
+    estimated_profit and an active listing.
+
+Accept at confidence ≥ 0.5. Prefer accept when the profit metrics
+already justify the trade, even if rank data is thin.
 """
 
 
@@ -212,7 +225,7 @@ def node_decide(state: AnalystState) -> dict[str, Any]:
         int(state_accum.get(f"{decision}_total", 0)) + 1
     )
 
-    if decision == "accept" and confidence >= 0.6 and asin:
+    if decision == "accept" and confidence >= 0.5 and asin:
         events.append(
             {
                 "event_type": "amz.opportunity.confirmed",
@@ -244,7 +257,7 @@ def node_decide(state: AnalystState) -> dict[str, Any]:
             }
         )
         summary = f"Confirmed opportunity on {asin} (conf={confidence:.2f})"
-    elif decision == "reject" and confidence >= 0.6 and asin:
+    elif decision == "reject" and confidence >= 0.5 and asin:
         events.append(
             {
                 "event_type": "amz.opportunity.rejected",

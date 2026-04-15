@@ -191,10 +191,31 @@ _BATCH_SQL = text(
         u.amazon_price,
         u.fba_offer_count,
         u.new_offer_count,
+        u.used_offer_count,
         u.sales_rank,
-        u.last_update
+        u.monthly_sold,
+        u.rating,
+        u.review_count,
+        u.last_update,
+        -- Latest active opportunity row (scalar subquery — 1 per product)
+        o.id                      AS opportunity_id,
+        o.source_price            AS opp_source_price,
+        o.target_price            AS opp_target_price,
+        o.estimated_profit        AS opp_estimated_profit,
+        o.profit_margin_percent   AS opp_profit_margin_percent,
+        o.roi_percent             AS opp_roi_percent,
+        o.monthly_sold            AS opp_monthly_sold,
+        o.competition_level       AS opp_competition_level
     FROM products p
     LEFT JOIN us_market_data u ON u.product_id = p.id
+    LEFT JOIN LATERAL (
+        SELECT *
+        FROM arbitrage_opportunities ao
+        WHERE ao.product_id = p.id
+          AND ao.status = 'active'
+        ORDER BY ao.found_at DESC NULLS LAST
+        LIMIT 1
+    ) o ON TRUE
     WHERE p.asin = ANY(:asins)
     """
 )
@@ -252,6 +273,10 @@ async def pricefinder_db_lookup_asins(
             continue
         asin = row["asin"]
         seen.add(asin)
+        def _f(key: str) -> float | None:
+            v = row.get(key)
+            return float(v) if v is not None else None
+
         items.append(
             {
                 "asin": asin,
@@ -263,12 +288,27 @@ async def pricefinder_db_lookup_asins(
                 "price_source": source,
                 "fba_offer_count": row.get("fba_offer_count"),
                 "new_offer_count": row.get("new_offer_count"),
+                "used_offer_count": row.get("used_offer_count"),
                 "sales_rank": row.get("sales_rank"),
+                "monthly_sold": row.get("monthly_sold"),
+                "rating": _f("rating"),
+                "review_count": row.get("review_count"),
                 "last_update": (
                     row["last_update"].isoformat()
                     if row.get("last_update")
                     else None
                 ),
+                # Arbitrage signals (from the latest active opportunity row,
+                # or null if PriceFinder hasn't flagged this ASIN as an
+                # opportunity yet)
+                "opportunity_id": row.get("opportunity_id"),
+                "opp_source_price_try": _f("opp_source_price"),
+                "opp_target_price_usd": _f("opp_target_price"),
+                "estimated_profit_usd": _f("opp_estimated_profit"),
+                "profit_margin_pct": _f("opp_profit_margin_percent"),
+                "roi_pct": _f("opp_roi_percent"),
+                "opp_monthly_sold": row.get("opp_monthly_sold"),
+                "competition_level": row.get("opp_competition_level"),
                 "tr_price": (
                     float(row["tr_price"]) if row.get("tr_price") else None
                 ),
