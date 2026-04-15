@@ -5,10 +5,18 @@ from collections.abc import AsyncIterator
 
 import pytest_asyncio
 
-from studioos.bus import reset_bus
-from studioos.db import dispose_all, get_engine, session_scope
-from studioos.models import Base
-from studioos.studios import seed_all
+from studioos.config import settings
+
+# Force the in-process bus backend for the test suite. The Redis backend is
+# smoke-verified via the M1/M2/M3 happy-path tests against a running Redis in
+# prod — see verify_prod.sh — but DLQ + reclaim semantics need deterministic
+# (non-idle-timer) behavior that only the inproc backend provides.
+settings.bus_backend = "inproc"
+
+from studioos.bus import reset_bus  # noqa: E402
+from studioos.db import dispose_all, get_engine, session_scope  # noqa: E402
+from studioos.models import Base  # noqa: E402
+from studioos.studios import seed_all  # noqa: E402
 
 # Import workflows + event schemas so they register
 from studioos import workflows  # noqa: F401
