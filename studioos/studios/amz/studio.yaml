@@ -22,7 +22,7 @@ agents:
     heartbeat_config: {}
     schedule_cron: "@every 30m"
     goals:
-      anomaly_threshold_pct: 5.0
+      anomaly_threshold_pct: 2.0
       watchlist_strategy: top_opportunities
       watchlist_params:
         limit: 20
