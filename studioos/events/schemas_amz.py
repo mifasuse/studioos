@@ -86,10 +86,13 @@ class RepriceRecommendedV1(BaseModel):
     listing_id: int
     current_price: float
     proposed_price: float
-    buy_box_price: float
+    buy_box_price: float | None = None
     buybox_seller_name: str | None = None
     delta: float
     clamped_to_floor: bool = False
+    strategy: str = "buy_box_win"
+    strategy_rationale: str | None = None
+    age_days: float | None = None
 
 
 class QASmokeFailedV1(BaseModel):
@@ -127,6 +130,28 @@ class AdCandidateV1(BaseModel):
     sales_rank: int | None = None
 
 
+class TaskAssignedV1(BaseModel):
+    """amz.task.assigned — CEO delegating a concrete task to a target agent."""
+
+    target_agent: str
+    title: str
+    description: str
+    priority: str = "normal"  # emergency | high | normal | low
+    payload: dict | None = None
+    deadline: str | None = None
+    requested_by: str = "amz-ceo"
+
+
+class DeployNotificationV1(BaseModel):
+    """amz.deploy.notification — a service deploy completed; usually wakes amz-qa."""
+
+    service: str
+    commit: str | None = None
+    success: bool = True
+    message: str | None = None
+    deployed_by: str | None = None
+
+
 registry.register("amz.price.checked", 1, PriceCheckedV1)
 registry.register("amz.price.anomaly_detected", 1, PriceAnomalyDetectedV1)
 registry.register("amz.opportunity.confirmed", 1, OpportunityConfirmedV1)
@@ -136,3 +161,20 @@ registry.register("amz.reprice.recommended", 1, RepriceRecommendedV1)
 registry.register("amz.qa.smoke_failed", 1, QASmokeFailedV1)
 registry.register("amz.crosslist.candidate", 1, CrossListCandidateV1)
 registry.register("amz.ad.candidate", 1, AdCandidateV1)
+registry.register("amz.task.assigned", 1, TaskAssignedV1)
+# Per-target task event types — let each agent subscribe to its own
+# pattern without payload-side filtering. CEO routes to the right
+# variant when delegating.
+for _suffix in (
+    "monitor",
+    "scout",
+    "analyst",
+    "pricer",
+    "repricer",
+    "crosslister",
+    "admanager",
+    "qa",
+    "dev",
+):
+    registry.register(f"amz.task.{_suffix}", 1, TaskAssignedV1)
+registry.register("amz.deploy.notification", 1, DeployNotificationV1)

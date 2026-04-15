@@ -66,7 +66,14 @@ _LOST_BUYBOX_SQL = text(
         l.last_repriced_at,
         l.last_synced_at,
         l.has_pricing_violation,
-        l.listing_status
+        l.listing_status,
+        l.created_at,
+        EXTRACT(EPOCH FROM (NOW() - l.created_at)) / 86400.0 AS age_days,
+        (
+            SELECT count(*)
+            FROM competitors c
+            WHERE c.listing_id = l.id
+        ) AS competitor_count
     FROM listings l
     WHERE l.is_repricing_enabled = true
       AND l.listing_status IN ('Active', 'active')
@@ -79,6 +86,96 @@ _LOST_BUYBOX_SQL = text(
     LIMIT :lim
     """
 )
+
+
+_INVENTORY_AGING_SQL = text(
+    """
+    SELECT
+        l.id,
+        l.asin,
+        l.sku,
+        l.title,
+        l.acquisition_cost,
+        l.min_price,
+        l.max_price,
+        l.current_price,
+        l.buy_box_price,
+        l.has_buybox,
+        l.quantity,
+        l.last_repriced_at,
+        l.created_at,
+        EXTRACT(EPOCH FROM (NOW() - l.created_at)) / 86400.0 AS age_days
+    FROM listings l
+    WHERE l.is_repricing_enabled = true
+      AND l.listing_status IN ('Active', 'active')
+      AND l.quantity > 0
+      AND l.created_at IS NOT NULL
+      AND EXTRACT(EPOCH FROM (NOW() - l.created_at)) / 86400.0 >= :min_age_days
+    ORDER BY l.created_at ASC
+    LIMIT :lim
+    """
+)
+
+
+@register_tool(
+    "buyboxpricer.db.aging_inventory",
+    description=(
+        "Return active repricing-enabled listings older than min_age_days. "
+        "Used by the pricer's stok eritme strategy."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer"},
+            "min_age_days": {"type": "integer"},
+        },
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="amz",
+    cost_cents=0,
+)
+async def buyboxpricer_db_aging_inventory(
+    args: dict[str, Any], ctx: ToolContext
+) -> ToolResult:
+    eng = _engine()
+    async with eng.connect() as conn:
+        result = await conn.execute(
+            _INVENTORY_AGING_SQL,
+            {
+                "lim": int(args.get("limit", 25)),
+                "min_age_days": int(args.get("min_age_days", 90)),
+            },
+        )
+        rows = [dict(r) for r in result.mappings()]
+
+    def _f(v: Any) -> float | None:
+        return float(v) if v is not None else None
+
+    items = []
+    for r in rows:
+        items.append(
+            {
+                "listing_id": r["id"],
+                "asin": r["asin"],
+                "sku": r["sku"],
+                "title": (r.get("title") or "")[:120],
+                "acquisition_cost": _f(r.get("acquisition_cost")),
+                "min_price": _f(r.get("min_price")),
+                "max_price": _f(r.get("max_price")),
+                "current_price": _f(r.get("current_price")),
+                "buy_box_price": _f(r.get("buy_box_price")),
+                "has_buybox": r.get("has_buybox"),
+                "quantity": r.get("quantity"),
+                "age_days": _f(r.get("age_days")),
+                "last_repriced_at": (
+                    r["last_repriced_at"].isoformat()
+                    if r.get("last_repriced_at")
+                    else None
+                ),
+            }
+        )
+    return ToolResult(data={"items": items, "count": len(items)})
 
 
 @register_tool(
@@ -137,6 +234,8 @@ async def buyboxpricer_db_lost_buybox(
                 "fulfillment_channel": r.get("fulfillment_channel"),
                 "gap": gap,
                 "gap_pct": gap_pct,
+                "age_days": _f(r.get("age_days")),
+                "competitor_count": r.get("competitor_count"),
                 "last_repriced_at": (
                     r["last_repriced_at"].isoformat()
                     if r.get("last_repriced_at")

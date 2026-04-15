@@ -29,6 +29,7 @@ class AdState(TypedDict, total=False):
     input: dict[str, Any]
     goals: dict[str, Any]
     candidates: list[dict[str, Any]]
+    active_campaigns: list[dict[str, Any]]
     new_finds: list[dict[str, Any]]
     events: list[dict[str, Any]]
     memories: list[dict[str, Any]]
@@ -38,7 +39,7 @@ class AdState(TypedDict, total=False):
 
 async def node_scan(state: AdState) -> dict[str, Any]:
     goals = state.get("goals") or {}
-    result = await invoke_from_state(
+    pf = await invoke_from_state(
         state,
         "pricefinder.db.ad_candidates",
         {
@@ -49,10 +50,33 @@ async def node_scan(state: AdState) -> dict[str, Any]:
             "max_competitors": int(goals.get("max_competitors", 15)),
         },
     )
-    if result["status"] != "ok":
-        log.warning("amz_admanager.scan_failed", error=result.get("error"))
-        return {"candidates": []}
-    return {"candidates": (result["data"] or {}).get("items") or []}
+    candidates = (
+        (pf["data"] or {}).get("items") or [] if pf["status"] == "ok" else []
+    )
+    if pf["status"] != "ok":
+        log.warning("amz_admanager.scan_failed", error=pf.get("error"))
+
+    # Pull existing AdsOptimizer campaigns so we can flag ASINs that
+    # already have one running. The current AdsOptimizer schema doesn't
+    # carry actual ACOS metrics, so the `over_target_acos_pause` logic
+    # the OpenClaw playbook describes is structurally not implementable
+    # here yet — we surface enabled campaigns instead and let the
+    # human decide.
+    camps = await invoke_from_state(
+        state,
+        "adsoptimizer.db.list_campaigns",
+        {"limit": 200, "state": "enabled"},
+    )
+    active_campaigns = (
+        (camps["data"] or {}).get("items") or []
+        if camps["status"] == "ok"
+        else []
+    )
+
+    return {
+        "candidates": candidates,
+        "active_campaigns": active_campaigns,
+    }
 
 
 def node_diff(state: AdState) -> dict[str, Any]:

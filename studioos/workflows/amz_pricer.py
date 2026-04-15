@@ -33,6 +33,7 @@ class PricerState(TypedDict, total=False):
     goals: dict[str, Any]
     # populated during run
     lost: list[dict[str, Any]]
+    aging: list[dict[str, Any]]
     recommendations: list[dict[str, Any]]
     events: list[dict[str, Any]]
     memories: list[dict[str, Any]]
@@ -51,72 +52,192 @@ def _scan_limit(state: PricerState) -> int:
 
 
 async def node_scan(state: PricerState) -> dict[str, Any]:
-    result = await invoke_from_state(
+    goals = state.get("goals") or {}
+    lost_result = await invoke_from_state(
         state, "buyboxpricer.db.lost_buybox", {"limit": _scan_limit(state)}
     )
-    if result["status"] != "ok":
+    lost = (
+        (lost_result["data"] or {}).get("items") or []
+        if lost_result["status"] == "ok"
+        else []
+    )
+    if lost_result["status"] != "ok":
         log.warning(
-            "amz_pricer.scan_failed",
-            status=result["status"],
-            error=result.get("error"),
+            "amz_pricer.lost_scan_failed", error=lost_result.get("error")
         )
-        return {"lost": []}
-    items = (result["data"] or {}).get("items") or []
-    return {"lost": items}
+
+    aging_result = await invoke_from_state(
+        state,
+        "buyboxpricer.db.aging_inventory",
+        {
+            "limit": int(goals.get("aging_limit", 25)),
+            "min_age_days": int(goals.get("min_age_days", 90)),
+        },
+    )
+    aging = (
+        (aging_result["data"] or {}).get("items") or []
+        if aging_result["status"] == "ok"
+        else []
+    )
+    if aging_result["status"] != "ok":
+        log.warning(
+            "amz_pricer.aging_scan_failed", error=aging_result.get("error")
+        )
+
+    return {"lost": lost, "aging": aging}
+
+
+def _pick_strategy(listing: dict[str, Any]) -> tuple[str, str]:
+    """Return (strategy_id, rationale) for a single listing.
+
+    Three modes mirror the OpenClaw amz-pricer playbook:
+
+      buy_box_win    — competitor active, buybox lost, beat them by
+                       underbid% (default mode for fresh stock)
+      profit_max     — low competition (≤ 3 offers), recently selling,
+                       push price UP toward max_price
+      stock_bleed    — old stock (> 90d) sitting on the shelf,
+                       aggressive cut to the floor to clear it
+    """
+    age = listing.get("age_days") or 0
+    comp = listing.get("competitor_count") or 0
+    has_buybox = bool(listing.get("has_buybox"))
+
+    if age >= 90:
+        return "stock_bleed", f"{int(age)}d age — aggressive clearance"
+    if comp <= 3 and has_buybox:
+        return "profit_max", f"low comp ({comp}) + buybox held — push up"
+    return "buy_box_win", "lost buybox to competitor — match-1%"
+
+
+def _propose_price(
+    listing: dict[str, Any],
+    strategy: str,
+    underbid_pct: float,
+) -> tuple[float | None, bool, str]:
+    """Compute the proposed price for a listing under the given strategy.
+
+    Returns (proposed_price, clamped_flag, reason).
+    """
+    buybox = listing.get("buy_box_price")
+    current = listing.get("current_price")
+    floor = listing.get("min_price")
+    ceiling = listing.get("max_price")
+
+    if current is None:
+        return None, False, "no current_price"
+
+    if strategy == "buy_box_win":
+        if buybox is None:
+            return None, False, "no buy_box_price"
+        target = round(buybox * (1.0 - underbid_pct / 100.0), 2)
+        clamped = False
+        if floor is not None and target < floor:
+            target = float(floor)
+            clamped = True
+        if target >= current:
+            return None, False, "match would not lower price"
+        return target, clamped, "match buybox −1%"
+
+    if strategy == "profit_max":
+        target = round(current * 1.05, 2)
+        clamped = False
+        if ceiling is not None and target > ceiling:
+            target = float(ceiling)
+            clamped = True
+        if target <= current:
+            return None, False, "ceiling reached"
+        return target, clamped, "+5% on low competition"
+
+    if strategy == "stock_bleed":
+        if floor is None:
+            return None, False, "no floor for stock bleed"
+        target = float(floor)
+        if target >= current:
+            return None, False, "already at floor"
+        return target, True, "drop to floor to clear aging stock"
+
+    return None, False, "unknown strategy"
 
 
 def node_recommend(state: PricerState) -> dict[str, Any]:
     lost = state.get("lost") or []
+    aging = state.get("aging") or []
     underbid = _underbid_pct(state)
-    recs: list[dict[str, Any]] = []
 
+    # Combine lost-buybox and aging items, deduping by listing_id.
+    by_id: dict[int, dict[str, Any]] = {}
     for listing in lost:
-        buybox = listing.get("buy_box_price")
-        current = listing.get("current_price")
-        floor = listing.get("min_price")
-        if buybox is None or current is None:
+        lid = listing.get("listing_id")
+        if lid is not None:
+            by_id[lid] = listing
+    for listing in aging:
+        lid = listing.get("listing_id")
+        if lid is None:
             continue
+        merged = dict(by_id.get(lid, {}))
+        merged.update(listing)
+        # carry through buybox info from lost row if both sources hit
+        if not merged.get("has_buybox") and "has_buybox" in listing:
+            merged["has_buybox"] = listing["has_buybox"]
+        by_id[lid] = merged
 
-        # Match buy box minus underbid%, but never below the floor.
-        proposed = round(buybox * (1.0 - underbid / 100.0), 2)
-        clamped_to_floor = False
-        if floor is not None and proposed < floor:
-            proposed = float(floor)
-            clamped_to_floor = True
-
-        # Skip if the proposed is not actually cheaper than current
-        # (would reprice us upward — pointless).
-        if proposed >= current:
+    recs: list[dict[str, Any]] = []
+    for listing in by_id.values():
+        strategy, rationale = _pick_strategy(listing)
+        proposed, clamped, reason = _propose_price(listing, strategy, underbid)
+        if proposed is None:
             continue
-
+        current = listing.get("current_price") or 0
         delta = round(current - proposed, 2)
         recs.append(
             {
                 **listing,
+                "strategy": strategy,
+                "strategy_rationale": rationale,
+                "price_reason": reason,
                 "proposed_price": proposed,
                 "delta": delta,
-                "clamped_to_floor": clamped_to_floor,
+                "clamped_to_floor": clamped,
             }
         )
 
     return {"recommendations": recs}
 
 
+_STRATEGY_ICON = {
+    "buy_box_win": "🥊",
+    "profit_max": "📈",
+    "stock_bleed": "🔥",
+}
+
+
 def _format_digest(recs: list[dict[str, Any]]) -> str:
-    lines = [f"*💰 AMZ Pricer — {len(recs)} reprice önerisi*\n"]
+    by_strategy: dict[str, int] = {}
+    for r in recs:
+        s = r.get("strategy") or "?"
+        by_strategy[s] = by_strategy.get(s, 0) + 1
+    breakdown = " · ".join(
+        f"{_STRATEGY_ICON.get(k, '•')} {k}={v}" for k, v in by_strategy.items()
+    )
+    lines = [
+        f"*💰 AMZ Pricer — {len(recs)} öneri*",
+        f"_{breakdown}_\n",
+    ]
     for r in recs[:10]:
         asin = r.get("asin", "?")
         sku = r.get("sku", "?")
         current = r.get("current_price")
         proposed = r.get("proposed_price")
         delta = r.get("delta")
-        bbox = r.get("buy_box_price")
-        bbox_seller = r.get("buybox_seller_name") or "?"
-        flag = " *⚠ floor*" if r.get("clamped_to_floor") else ""
+        strat = r.get("strategy", "?")
+        icon = _STRATEGY_ICON.get(strat, "•")
+        flag = " *⚠ clamped*" if r.get("clamped_to_floor") else ""
+        rationale = (r.get("strategy_rationale") or "")[:50]
         lines.append(
-            f"• `{asin}` ({sku})\n"
-            f"  *${current:.2f}* → *${proposed:.2f}* (-${delta:.2f}){flag}\n"
-            f"  buybox ${bbox:.2f} @ {bbox_seller}"
+            f"{icon} `{asin}` ({sku}) — *{strat}*\n"
+            f"  ${current} → ${proposed} ({'-' if delta and delta > 0 else '+'}${abs(delta or 0):.2f}){flag}\n"
+            f"  _{rationale}_"
         )
     if len(recs) > 10:
         lines.append(f"\n_+{len(recs) - 10} more_")
@@ -152,6 +273,9 @@ async def node_emit(state: PricerState) -> dict[str, Any]:
                     "buybox_seller_name": r.get("buybox_seller_name"),
                     "delta": r.get("delta"),
                     "clamped_to_floor": r.get("clamped_to_floor", False),
+                    "strategy": r.get("strategy", "buy_box_win"),
+                    "strategy_rationale": r.get("strategy_rationale"),
+                    "age_days": r.get("age_days"),
                 },
                 "idempotency_key": (
                     f"amz_pricer:{state['run_id']}:reprice:{asin}"

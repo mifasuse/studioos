@@ -79,11 +79,39 @@ async def node_collect(state: DevState) -> dict[str, Any]:
         }
         for agent_id, err in fail_rows
     ]
+
+    # Best-effort git status pulse for every allow-listed repo. Tool
+    # call may fail if the allow-list is empty or git isn't available;
+    # we never block the run on it.
+    goals = state.get("goals") or {}
+    repos = goals.get("repos") or []
+    repo_state: list[dict[str, Any]] = []
+    for repo in repos:
+        result = await invoke_from_state(
+            state, "exec.git_status", {"repo": repo}
+        )
+        if result["status"] != "ok":
+            repo_state.append(
+                {"repo": repo, "ok": False, "error": result.get("error")}
+            )
+            continue
+        d = result["data"] or {}
+        repo_state.append(
+            {
+                "repo": repo,
+                "ok": True,
+                "clean": d.get("clean"),
+                "change_count": d.get("change_count"),
+                "changes": d.get("changes", [])[:5],
+            }
+        )
+
     return {
         "snapshot": {
             "window_minutes": 60,
             "total_runs": total_runs,
             "failures": failures,
+            "repos": repo_state,
         }
     }
 
@@ -92,9 +120,10 @@ async def node_report(state: DevState) -> dict[str, Any]:
     snap = state.get("snapshot") or {}
     failures = snap.get("failures") or []
     total = snap.get("total_runs", 0)
+    repos = snap.get("repos") or []
 
     if not failures:
-        text = (
+        head = (
             f"*🛠 AMZ Dev pulse* — son 60dk: {total} run, *0 hata*. Sistem yeşil."
         )
     else:
@@ -106,7 +135,21 @@ async def node_report(state: DevState) -> dict[str, Any]:
             lines.append(
                 f"• `{f['agent_id']}` — {f['type']}: {f['message'][:60]}"
             )
-        text = "\n".join(lines)
+        head = "\n".join(lines)
+
+    repo_lines: list[str] = []
+    if repos:
+        repo_lines.append("\n*Repo durumu:*")
+        for r in repos:
+            if not r.get("ok"):
+                repo_lines.append(
+                    f"• `{r['repo']}` — _err_ {(r.get('error') or '')[:60]}"
+                )
+                continue
+            mark = "✓ clean" if r.get("clean") else f"✗ {r.get('change_count', 0)} change"
+            repo_lines.append(f"• `{r['repo']}` — {mark}")
+
+    text = head + ("\n" + "\n".join(repo_lines) if repo_lines else "")
 
     notify_tg = await invoke_from_state(
         state,

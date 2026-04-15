@@ -55,8 +55,9 @@ class CEOState(TypedDict, total=False):
 
 
 SYSTEM_PROMPT = """You are the CEO of an autonomous Amazon TR→US
-arbitrage studio. You run once a week. Your only job is to decide
-what the next 7 days of operations should focus on.
+arbitrage studio. You run once a week. Your job is to (a) summarize
+what happened, (b) decide what the next 7 days should focus on, and
+(c) delegate concrete tasks to specific agents.
 
 You receive:
   - 7-day digest of agent runs, verdicts, scout discoveries,
@@ -64,23 +65,47 @@ You receive:
   - Current KPI snapshot
   - Active playbook (operating rules)
 
-Your reply is a Turkish brief in plain Markdown, exactly 4 sections:
+Available agents you can delegate to:
+  amz-monitor, amz-scout, amz-analyst, amz-pricer, amz-repricer,
+  amz-crosslister, amz-admanager, amz-qa, amz-dev
+
+Your reply is in TWO parts.
+
+PART 1 — Brief (Turkish, plain Markdown), 4 sections:
 
   ## Bu hafta ne oldu
-  3-5 bullet, somut sayılarla. Ham veri yorumla.
+  3-5 bullet, somut sayılarla.
 
   ## Bu haftanın 3 ROI etkisi
-  ROI/profit'i en çok etkileyen 3 şey, sayılarla, hangi ürünler/agentlar.
+  ROI/profit'i en çok etkileyen 3 şey.
 
   ## Önümüzdeki hafta ne yapacağız
-  3 somut karar (ürün seçimi / fiyat / reklam / cross-list eksenlerinden).
-  Her karar için "kim yapacak" (hangi agent) belirt.
+  3 somut karar.
 
   ## Risk ve eşikler
-  Bu hafta dikkat edilecek 1-2 nokta, eşik aşımı varsa flag et.
+  1-2 dikkat noktası.
 
-Style: yöneticisin, yorum yap, karar al, kanıtla destekle. Ham veri
-listeleme. Belirsizse "veri yetersiz" de.
+PART 2 — Delegations as a fenced JSON code block at the very end:
+
+```json
+{
+  "tasks": [
+    {
+      "target_agent": "amz-pricer",
+      "title": "Aging stock review",
+      "description": "Check inventory > 60 days, recommend price drops",
+      "priority": "high"
+    }
+  ]
+}
+```
+
+Each task: target_agent (must be one of the available list),
+title (≤ 60 chars), description (≤ 240 chars), priority
+("emergency" | "high" | "normal" | "low"). Maximum 5 tasks. Skip
+the JSON block entirely if no delegations needed.
+
+Style: terse, factual, kanıt odaklı.
 """
 
 
@@ -253,11 +278,74 @@ async def node_brief(state: CEOState) -> dict[str, Any]:
     return {"brief": (result["data"] or {}).get("content", "").strip()}
 
 
+_VALID_TARGETS = {
+    "amz-monitor",
+    "amz-scout",
+    "amz-analyst",
+    "amz-pricer",
+    "amz-repricer",
+    "amz-crosslister",
+    "amz-admanager",
+    "amz-qa",
+    "amz-dev",
+}
+
+
+def _extract_tasks(brief: str) -> list[dict[str, Any]]:
+    """Pull the trailing ```json {tasks: [...]} ``` block out of the brief."""
+    import re
+
+    match = re.search(
+        r"```json\s*(\{[\s\S]*?\})\s*```", brief, re.MULTILINE
+    )
+    if not match:
+        return []
+    try:
+        data = json.loads(match.group(1))
+    except ValueError:
+        return []
+    raw_tasks = data.get("tasks") or []
+    out: list[dict[str, Any]] = []
+    for t in raw_tasks[:5]:
+        if not isinstance(t, dict):
+            continue
+        target = t.get("target_agent")
+        if target not in _VALID_TARGETS:
+            continue
+        out.append(
+            {
+                "target_agent": target,
+                "title": str(t.get("title", ""))[:60] or "untitled",
+                "description": str(t.get("description", ""))[:240],
+                "priority": (t.get("priority") or "normal").lower(),
+                "payload": t.get("payload") or {},
+            }
+        )
+    return out
+
+
 async def node_publish(state: CEOState) -> dict[str, Any]:
     brief = state.get("brief") or ""
     today = datetime.now(UTC).date().isoformat()
-    text_slack = f"*🧭 AMZ CEO — Haftalık Brief — {today}*\n\n{brief[:38000]}"
-    text_tg = f"*🧭 AMZ CEO — Haftalık Brief — {today}*\n\n{brief[:3500]}"
+    delegations = _extract_tasks(brief)
+    # Strip the json fence from the human-facing brief so Slack/Telegram
+    # don't show the raw JSON twice.
+    import re
+
+    human_brief = re.sub(
+        r"```json[\s\S]*?```", "", brief, flags=re.MULTILINE
+    ).strip()
+
+    if delegations:
+        lines = ["", "*Delegasyonlar:*"]
+        for t in delegations:
+            lines.append(
+                f"• `{t['target_agent']}` _{t['priority']}_ — {t['title']}"
+            )
+        human_brief = human_brief + "\n" + "\n".join(lines)
+
+    text_slack = f"*🧭 AMZ CEO — Haftalık Brief — {today}*\n\n{human_brief[:38000]}"
+    text_tg = f"*🧭 AMZ CEO — Haftalık Brief — {today}*\n\n{human_brief[:3500]}"
 
     slack_res = await invoke_from_state(
         state,
@@ -276,21 +364,48 @@ async def node_publish(state: CEOState) -> dict[str, Any]:
 
     state_accum = dict(state.get("state") or {})
     state_accum["briefs_total"] = int(state_accum.get("briefs_total", 0)) + 1
+    state_accum["last_delegations"] = len(delegations)
+
+    events_out: list[dict[str, Any]] = []
+    for t in delegations:
+        suffix = t["target_agent"].replace("amz-", "", 1)
+        events_out.append(
+            {
+                "event_type": f"amz.task.{suffix}",
+                "event_version": 1,
+                "payload": {
+                    "target_agent": t["target_agent"],
+                    "title": t["title"],
+                    "description": t["description"],
+                    "priority": t["priority"],
+                    "payload": t.get("payload") or {},
+                    "requested_by": "amz-ceo",
+                },
+                "idempotency_key": (
+                    f"amz_ceo:{state['run_id']}:{t['target_agent']}:{t['title'][:32]}"
+                ),
+            }
+        )
 
     return {
+        "events": events_out,
         "memories": [
             {
-                "content": f"Weekly CEO brief {today}: {brief[:300]}",
+                "content": (
+                    f"Weekly CEO brief {today}: {brief[:300]} "
+                    f"(delegated {len(delegations)} tasks)"
+                ),
                 "tags": ["amz", "ceo", "weekly", today],
                 "importance": 0.8,
             }
         ],
         "kpi_updates": [
-            {"name": "ceo_briefs_total", "value": state_accum["briefs_total"]}
+            {"name": "ceo_briefs_total", "value": state_accum["briefs_total"]},
+            {"name": "ceo_delegations_last", "value": len(delegations)},
         ],
         "state": state_accum,
         "summary": (
-            f"Weekly brief published "
+            f"Weekly brief + {len(delegations)} delegations published "
             f"(slack={slack_res['status']}, telegram={tg_res['status']})"
         ),
     }

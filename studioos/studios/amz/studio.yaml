@@ -237,8 +237,16 @@ agents:
     mode: normal
     heartbeat_config: {}
     schedule_cron: "@every 1h"
-    goals: {}
+    goals:
+      repos:
+        - /srv/projects/pricefinder
+        - /srv/projects/buyboxpricer
+        - /srv/projects/adsoptimizer
+        - /home/deployer/ebaycrosslister
     tool_scope:
+      - exec.git_status
+      - exec.git_log
+      - exec.docker_compose_ps
       - telegram.notify
       - slack.notify
       - memory.search
@@ -255,3 +263,35 @@ subscriptions:
   - subscriber: amz-repricer
     event_pattern: "amz.reprice.recommended"
     priority: 25
+  # CEO delegation: each agent listens for its own task type.
+  - subscriber: amz-monitor
+    event_pattern: "amz.task.monitor"
+    priority: 15
+  - subscriber: amz-scout
+    event_pattern: "amz.task.scout"
+    priority: 15
+  - subscriber: amz-analyst
+    event_pattern: "amz.task.analyst"
+    priority: 15
+  - subscriber: amz-pricer
+    event_pattern: "amz.task.pricer"
+    priority: 15
+  - subscriber: amz-repricer
+    event_pattern: "amz.task.repricer"
+    priority: 15
+  - subscriber: amz-crosslister
+    event_pattern: "amz.task.crosslister"
+    priority: 15
+  - subscriber: amz-admanager
+    event_pattern: "amz.task.admanager"
+    priority: 15
+  - subscriber: amz-qa
+    event_pattern: "amz.task.qa"
+    priority: 15
+  - subscriber: amz-dev
+    event_pattern: "amz.task.dev"
+    priority: 15
+  # QA also wakes on deploy notifications so smoke runs after every push.
+  - subscriber: amz-qa
+    event_pattern: "amz.deploy.notification"
+    priority: 10

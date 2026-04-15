@@ -96,6 +96,11 @@ class Settings(BaseSettings):
 
     # EbayCrossLister (M23)
     ebaycrosslister_db_url: str = ""
+    ebaycrosslister_api_url: str = (
+        "https://ebaycrosslister.mifasuse.com/api/v1"
+    )
+    ebaycrosslister_username: str = ""
+    ebaycrosslister_password: str = ""
 
     # Notifications (M11)
     telegram_bot_token: str = ""
@@ -114,6 +119,10 @@ class Settings(BaseSettings):
     # Format: comma-separated "prefix=command arg arg" entries, e.g.
     #   fs=npx -y @modelcontextprotocol/server-filesystem /tmp,git=mcp-git
     mcp_stdio_servers: str = ""
+
+    # Dev exec allow-list (M24)
+    # Comma-separated absolute repo paths the exec.* tools may read.
+    dev_repo_allowlist: str = ""
 
 
 settings = Settings()

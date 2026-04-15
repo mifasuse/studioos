@@ -472,6 +472,10 @@ _SCOUT_SQL = text(
       AND COALESCE(o.roi_percent, 0) <= :max_roi_pct
       AND COALESCE(o.estimated_profit, 0) >= :min_profit_dollars
       AND COALESCE(p.tr_price, 0) >= :min_tr_price
+      AND NOT EXISTS (
+        SELECT 1 FROM brand_blacklist bl
+        WHERE LOWER(bl.brand_name) = LOWER(p.brand)
+      )
     ORDER BY o.estimated_profit DESC NULLS LAST,
              o.profit_margin_percent DESC NULLS LAST
     LIMIT :lim
