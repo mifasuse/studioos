@@ -62,14 +62,5 @@ async def db_session(db_setup: None) -> AsyncIterator[None]:
         from studioos.models import AgentState
 
         await session.execute(update(AgentState).values(state={}))
-        # Re-run the seed loader so any fields tests mutated on agents
-        # (schedule_cron, mode, tool_scope, last_scheduled_at) snap back
-        # to the yaml-declared values before the next test.
-        from studioos.models import Agent
-
-        await session.execute(
-            update(Agent).values(last_scheduled_at=None)
-        )
-        await seed_all(session)
     reset_bus()
     yield
