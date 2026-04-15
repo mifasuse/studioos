@@ -95,6 +95,9 @@ class Settings(BaseSettings):
 
     # AdsOptimizer (M23)
     adsoptimizer_db_url: str = ""
+    adsoptimizer_api_url: str = "https://adsoptimizer.mifasuse.com/api/v1"
+    adsoptimizer_username: str = ""
+    adsoptimizer_password: str = ""
 
     # EbayCrossLister (M23)
     ebaycrosslister_db_url: str = ""
@@ -111,6 +114,11 @@ class Settings(BaseSettings):
     # Slack notify (M20)
     slack_bot_token: str = ""
     slack_default_channel: str = ""
+    # Per-agent bot tokens + channel routing (OpenClaw SLACK_POSTING.md).
+    # Format: "agent_id=xoxb-...,agent_id2=xoxb-..."
+    slack_agent_tokens: str = ""
+    # Format: "agent_id=#channel,agent_id2=#channel"  (channel may be ID or name)
+    slack_agent_channels: str = ""
 
     # MCP HTTP tool servers (M21)
     # Format: comma-separated "prefix=url" entries, e.g.

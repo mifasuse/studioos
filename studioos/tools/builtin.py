@@ -83,6 +83,51 @@ async def http_get_json(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
 
 
 @register_tool(
+    "http.post_json",
+    description=(
+        "HTTP POST a JSON body to a URL and return the parsed JSON "
+        "response. Network required."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "url": {"type": "string"},
+            "json": {"type": "object"},
+            "timeout_seconds": {"type": "number"},
+            "headers": {"type": "object"},
+        },
+        "required": ["url"],
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="network",
+    cost_cents=2,
+)
+async def http_post_json(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    url = args["url"]
+    timeout = float(args.get("timeout_seconds", 10))
+    headers = args.get("headers") or {}
+    body_in = args.get("json") or {}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(url, json=body_in, headers=headers)
+    except httpx.HTTPError as exc:
+        raise ToolError(f"http error: {exc}") from exc
+    if resp.status_code >= 400:
+        raise ToolError(f"http {resp.status_code}: {resp.text[:200]}")
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise ToolError(f"non-json response: {exc}") from exc
+    return ToolResult(
+        data={
+            "status_code": resp.status_code,
+            "body": body,
+        }
+    )
+
+
+@register_tool(
     "memory.search",
     description="Semantic search over the agent's memory.",
     input_schema={

@@ -44,6 +44,13 @@ class OpportunityConfirmedV1(BaseModel):
     confidence: float = Field(ge=0, le=1)
     rationale: str
     recommended_action: str | None = None
+    # Deterministic scoring (analyst matrix). Optional for backwards compat.
+    matrix_verdict: str | None = None  # GUCLU_AL | AL | IZLE | GEC
+    net_profit_usd: float | None = None
+    roi_pct: float | None = None
+    margin_pct: float | None = None
+    risk_total: int | None = None
+    risk_breakdown: dict | None = None
 
 
 class OpportunityRejectedV1(BaseModel):

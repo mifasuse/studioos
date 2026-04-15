@@ -21,6 +21,10 @@ from studioos.logging import get_logger
 from studioos.models import AgentRun
 from studioos.runtime.workflow_registry import register_workflow
 from studioos.tools import invoke_from_state
+from studioos.workflows.amz_dev_tech_map import (
+    SERVICES as TECH_MAP_SERVICES,
+    tech_map_memories,
+)
 
 log = get_logger(__name__)
 
@@ -106,13 +110,50 @@ async def node_collect(state: DevState) -> dict[str, Any]:
             }
         )
 
+    # Alembic drift — poll each service's /alembic/current endpoint
+    # if exposed. Failures are non-fatal (most services don't yet
+    # expose it; we log the shape DEV can add it to as a follow-up).
+    alembic_status: list[dict[str, Any]] = []
+    for svc in TECH_MAP_SERVICES:
+        url = f"{svc['backend_internal']}/api/v1/alembic/current"
+        r = await invoke_from_state(
+            state, "http.get_json", {"url": url, "timeout_seconds": 5}
+        )
+        if r["status"] == "ok":
+            body = (r.get("data") or {}).get("body") or {}
+            alembic_status.append(
+                {
+                    "service": svc["name"],
+                    "revision": body.get("revision"),
+                    "head": body.get("head"),
+                    "ok": body.get("revision") == body.get("head"),
+                }
+            )
+
     return {
         "snapshot": {
             "window_minutes": 60,
             "total_runs": total_runs,
             "failures": failures,
             "repos": repo_state,
+            "alembic": alembic_status,
         }
+    }
+
+
+def node_seed_tech_map(state: DevState) -> dict[str, Any]:
+    """Seed tech-map memories on first run only.
+
+    We tag each memory with `amz:dev:tech_map` so the reflector can
+    surface them later. A state flag prevents re-seeding.
+    """
+    state_accum = dict(state.get("state") or {})
+    if state_accum.get("tech_map_seeded"):
+        return {}
+    state_accum["tech_map_seeded"] = True
+    return {
+        "memories": tech_map_memories(),
+        "state": state_accum,
     }
 
 
@@ -121,6 +162,7 @@ async def node_report(state: DevState) -> dict[str, Any]:
     failures = snap.get("failures") or []
     total = snap.get("total_runs", 0)
     repos = snap.get("repos") or []
+    alembic = snap.get("alembic") or []
 
     if not failures:
         head = (
@@ -149,7 +191,20 @@ async def node_report(state: DevState) -> dict[str, Any]:
             mark = "✓ clean" if r.get("clean") else f"✗ {r.get('change_count', 0)} change"
             repo_lines.append(f"• `{r['repo']}` — {mark}")
 
-    text = head + ("\n" + "\n".join(repo_lines) if repo_lines else "")
+    alembic_lines: list[str] = []
+    drifted = [a for a in alembic if not a.get("ok")]
+    if drifted:
+        alembic_lines.append("\n*Alembic drift:*")
+        for a in drifted:
+            alembic_lines.append(
+                f"• `{a['service']}` — {a.get('revision')} ≠ {a.get('head')}"
+            )
+
+    text = head
+    if repo_lines:
+        text += "\n" + "\n".join(repo_lines)
+    if alembic_lines:
+        text += "\n" + "\n".join(alembic_lines)
 
     notify_tg = await invoke_from_state(
         state,
@@ -194,9 +249,11 @@ async def node_report(state: DevState) -> dict[str, Any]:
 
 def build_graph() -> Any:
     graph = StateGraph(DevState)
+    graph.add_node("seed_tech_map", node_seed_tech_map)
     graph.add_node("collect", node_collect)
     graph.add_node("report", node_report)
-    graph.add_edge(START, "collect")
+    graph.add_edge(START, "seed_tech_map")
+    graph.add_edge("seed_tech_map", "collect")
     graph.add_edge("collect", "report")
     graph.add_edge("report", END)
     return graph.compile()

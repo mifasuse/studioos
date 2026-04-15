@@ -20,7 +20,7 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy import desc, func, select
 
 from studioos.db import session_scope
-from studioos.kpi.store import get_current_state
+from studioos.kpi.store import get_current_state, upsert_target
 from studioos.logging import get_logger
 from studioos.models import (
     AgentRun,
@@ -69,6 +69,34 @@ Available agents you can delegate to:
   amz-monitor, amz-scout, amz-analyst, amz-pricer, amz-repricer,
   amz-crosslister, amz-admanager, amz-qa, amz-dev
 
+KPI HEDEFLERI (CEO.md):
+  - Toplam ROI > %30
+  - Buy Box kazanma oranı > %80
+  - ACOS < %25
+  - Envanter devir hızı < 30 gün
+  - Cross-list gelir oranı (eBay/toplam) artan
+
+Haftalık döngü:
+  Pzt  → Scout raporu + yeni fırsat taraması
+  Sal  → Pricer stratejisi + Buy Box performansı
+  Çrş  → Reklam performansı + ACOS analizi
+  Prş  → Cross-list + eBay performansı
+  Cum  → Haftalık P&L
+  H.sonu → Rakip hareketi + fırsat taraması
+
+Ürün önerirken CEO.md'deki 9-alanlı format ZORUNLU:
+  1. ASIN + https://amazon.com/dp/ASIN linki
+  2. TR kaynak sitesi ve fiyatı
+  3. US BuyBox fiyatı
+  4. Sales Rank + kategori
+  5. Aylık satış adedi (monthly_sold)
+  6. Review sayısı + Rating
+  7. FBA satıcı sayısı
+  8. eBay fiyatı (cross-list potansiyeli)
+  9. Net kâr + ROI + Margin
+
+Eksik alan olduğunda "—" yaz, formatı asla kısaltma.
+
 Your reply is in TWO parts.
 
 PART 1 — Brief (Turkish, plain Markdown), 4 sections:
@@ -77,13 +105,14 @@ PART 1 — Brief (Turkish, plain Markdown), 4 sections:
   3-5 bullet, somut sayılarla.
 
   ## Bu haftanın 3 ROI etkisi
-  ROI/profit'i en çok etkileyen 3 şey.
+  ROI/profit'i en çok etkileyen 3 şey. (CEO.md'nin haftalık tek sorusu.)
 
   ## Önümüzdeki hafta ne yapacağız
-  3 somut karar.
+  3 somut karar. Gün-gün döngüyle hizala.
 
   ## Risk ve eşikler
-  1-2 dikkat noktası.
+  KPI hedeflerinden sapmaları listele (ROI<%30, BB<%80, ACOS>%25,
+  envanter devir >30 gün).
 
 PART 2 — Delegations as a fenced JSON code block at the very end:
 
@@ -242,6 +271,51 @@ async def _load_playbook() -> str | None:
             )
         ).scalar_one_or_none()
     return row.content if row else None
+
+
+CEO_KPI_TARGETS = [
+    ("amz_total_roi_pct", 30.0, "higher_better", "%", "Toplam ROI hedefi"),
+    ("amz_buybox_win_rate_pct", 80.0, "higher_better", "%", "Buy Box kazanma oranı"),
+    ("amz_acos_pct", 25.0, "lower_better", "%", "Amazon Ads ACOS"),
+    (
+        "amz_inventory_turnover_days",
+        30.0,
+        "lower_better",
+        "days",
+        "Envanter devir hızı",
+    ),
+    (
+        "amz_crosslist_revenue_ratio_pct",
+        20.0,
+        "higher_better",
+        "%",
+        "eBay / toplam gelir oranı",
+    ),
+]
+
+
+async def node_seed_kpi_targets(state: CEOState) -> dict[str, Any]:
+    """Idempotently seed the five OpenClaw CEO.md KPI targets.
+
+    Runs once — state flag prevents re-upsert. The workflow will still
+    record snapshots via other agents; targets are just the yardstick.
+    """
+    state_accum = dict(state.get("state") or {})
+    if state_accum.get("kpi_targets_seeded"):
+        return {}
+    async with session_scope() as session:
+        for name, value, direction, unit, desc in CEO_KPI_TARGETS:
+            await upsert_target(
+                session,
+                name=name,
+                target_value=value,
+                direction=direction,
+                studio_id="amz",
+                unit=unit,
+                description=desc,
+            )
+    state_accum["kpi_targets_seeded"] = True
+    return {"state": state_accum}
 
 
 async def node_collect(state: CEOState) -> dict[str, Any]:
@@ -413,10 +487,12 @@ async def node_publish(state: CEOState) -> dict[str, Any]:
 
 def build_graph() -> Any:
     graph = StateGraph(CEOState)
+    graph.add_node("seed_kpi_targets", node_seed_kpi_targets)
     graph.add_node("collect", node_collect)
     graph.add_node("brief", node_brief)
     graph.add_node("publish", node_publish)
-    graph.add_edge(START, "collect")
+    graph.add_edge(START, "seed_kpi_targets")
+    graph.add_edge("seed_kpi_targets", "collect")
     graph.add_edge("collect", "brief")
     graph.add_edge("brief", "publish")
     graph.add_edge("publish", END)

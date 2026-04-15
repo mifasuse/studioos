@@ -196,6 +196,11 @@ _BATCH_SQL = text(
         u.monthly_sold,
         u.rating,
         u.review_count,
+        u.fba_fee,
+        u.referral_fee,
+        u.buybox_is_fba,
+        u.ebay_new_price,
+        p.package_weight_g,
         u.last_update,
         -- Latest active opportunity row (scalar subquery — 1 per product)
         o.id                      AS opportunity_id,
@@ -293,6 +298,12 @@ async def pricefinder_db_lookup_asins(
                 "monthly_sold": row.get("monthly_sold"),
                 "rating": _f("rating"),
                 "review_count": row.get("review_count"),
+                "buybox_price": _f("buybox_price"),
+                "fba_fee": _f("fba_fee"),
+                "referral_fee": _f("referral_fee"),
+                "buybox_is_fba": row.get("buybox_is_fba"),
+                "ebay_new_price": _f("ebay_new_price"),
+                "package_weight_g": row.get("package_weight_g"),
                 "last_update": (
                     row["last_update"].isoformat()
                     if row.get("last_update")
@@ -320,6 +331,50 @@ async def pricefinder_db_lookup_asins(
             "items": items,
             "found": len(items),
             "missing": missing,
+        }
+    )
+
+
+_PF_GLOBAL_SETTINGS_SQL = text(
+    """
+    SELECT key, value FROM global_settings
+    WHERE key IN ('exchange_rate', 'shipping_cost', 'customs_rate', 'shipping_rate_per_kg')
+    """
+)
+
+
+@register_tool(
+    "pricefinder.db.global_settings",
+    description=(
+        "Fetch PriceFinder global_settings (exchange_rate, shipping_cost, "
+        "customs_rate, shipping_rate_per_kg) as a single dict. Used by "
+        "analyst/pricer for deterministic profit math."
+    ),
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+    requires_network=True,
+    category="amz",
+    cost_cents=0,
+)
+async def pricefinder_db_global_settings(
+    args: dict[str, Any], ctx: ToolContext
+) -> ToolResult:
+    engine = _pf_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(_PF_GLOBAL_SETTINGS_SQL)
+        rows = {r["key"]: r["value"] for r in result.mappings()}
+
+    def _f(key: str, default: float) -> float:
+        try:
+            return float(rows.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    return ToolResult(
+        data={
+            "exchange_rate": _f("exchange_rate", 30.0),
+            "shipping_cost": _f("shipping_cost", 6.0),
+            "customs_rate": _f("customs_rate", 0.4),
+            "shipping_rate_per_kg": _f("shipping_rate_per_kg", 6.0),
         }
     )
 
@@ -437,6 +492,7 @@ _SCOUT_SQL = text(
         p.brand,
         p.tr_price,
         p.tr_source,
+        p.package_weight_g,
         u.buybox_price,
         u.lowest_price,
         u.fba_lowest_price,
@@ -539,6 +595,7 @@ async def pricefinder_db_scout_candidates(
             "brand": r.get("brand"),
             "tr_price": _f(r.get("tr_price")),
             "tr_source": r.get("tr_source"),
+            "package_weight_g": r.get("package_weight_g"),
             "buybox_price": _f(r.get("buybox_price")),
             "fba_lowest_price": _f(r.get("fba_lowest_price")),
             "sales_rank": r.get("sales_rank"),

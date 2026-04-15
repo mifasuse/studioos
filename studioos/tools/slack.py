@@ -21,6 +21,41 @@ from .registry import register_tool
 log = get_logger(__name__)
 
 
+def _parse_map(raw: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for piece in (raw or "").split(","):
+        piece = piece.strip()
+        if not piece or "=" not in piece:
+            continue
+        k, _, v = piece.partition("=")
+        k = k.strip()
+        v = v.strip()
+        if k and v:
+            out[k] = v
+    return out
+
+
+def _resolve_slack_route(agent_id: str | None) -> tuple[str, str]:
+    """Return (token, channel) for the calling agent.
+
+    Priority:
+      1. Per-agent token from STUDIOOS_SLACK_AGENT_TOKENS
+      2. Default bot token from STUDIOOS_SLACK_BOT_TOKEN
+    Channel resolution mirrors the same pattern.
+    """
+    token_map = _parse_map(settings.slack_agent_tokens)
+    channel_map = _parse_map(settings.slack_agent_channels)
+    token = (
+        (token_map.get(agent_id) if agent_id else None)
+        or settings.slack_bot_token
+    )
+    channel = (
+        (channel_map.get(agent_id) if agent_id else None)
+        or settings.slack_default_channel
+    )
+    return token, channel
+
+
 @register_tool(
     "slack.notify",
     description=(
@@ -45,13 +80,18 @@ log = get_logger(__name__)
     cost_cents=0,
 )
 async def slack_notify(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-    token = settings.slack_bot_token
+    token, default_channel = _resolve_slack_route(ctx.agent_id)
     if not token:
-        raise ToolError("STUDIOOS_SLACK_BOT_TOKEN is not configured")
-    channel = args.get("channel") or settings.slack_default_channel
+        raise ToolError(
+            "no slack token — set STUDIOOS_SLACK_BOT_TOKEN or "
+            "STUDIOOS_SLACK_AGENT_TOKENS entry for this agent"
+        )
+    channel = args.get("channel") or default_channel
     if not channel:
         raise ToolError(
-            "channel not provided and STUDIOOS_SLACK_DEFAULT_CHANNEL is empty"
+            "channel not provided and no default for agent "
+            f"{ctx.agent_id!r} (STUDIOOS_SLACK_AGENT_CHANNELS / "
+            "STUDIOOS_SLACK_DEFAULT_CHANNEL)"
         )
 
     body: dict[str, Any] = {

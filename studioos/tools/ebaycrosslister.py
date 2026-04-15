@@ -69,6 +69,159 @@ _LISTABLE_SQL = text(
 )
 
 
+_STRANDED_SQL = text(
+    """
+    SELECT
+        a.id,
+        a.asin,
+        a.sku,
+        a.title,
+        a.amazon_price,
+        a.fulfillable_quantity,
+        a.reserved_quantity,
+        a.inbound_quantity,
+        a.condition,
+        a.stranded_reason,
+        a.last_synced_at
+    FROM amazon_inventory_items a
+    WHERE a.is_stranded = true
+      AND (a.fulfillable_quantity > 0 OR a.reserved_quantity > 0)
+    ORDER BY a.amazon_price DESC NULLS LAST
+    LIMIT :lim
+    """
+)
+
+
+@register_tool(
+    "ebaycrosslister.db.stranded_inventory",
+    description=(
+        "Return stranded Amazon inventory — items stuck in FBA that "
+        "can't sell on Amazon (gating, listing issue, etc). These are "
+        "the CrossLister's highest-priority cross-list candidates "
+        "because the stock is dead weight otherwise."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {"limit": {"type": "integer"}},
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="amz",
+    cost_cents=0,
+)
+async def ebaycrosslister_db_stranded(
+    args: dict[str, Any], ctx: ToolContext
+) -> ToolResult:
+    limit = int(args.get("limit", 30))
+    eng = _engine()
+    async with eng.connect() as conn:
+        result = await conn.execute(_STRANDED_SQL, {"lim": limit})
+        rows = [dict(r) for r in result.mappings()]
+
+    def _f(v: Any) -> float | None:
+        return float(v) if v is not None else None
+
+    items = [
+        {
+            "inventory_id": r["id"],
+            "asin": r["asin"],
+            "sku": r["sku"],
+            "title": (r.get("title") or "")[:120],
+            "amazon_price": _f(r.get("amazon_price")),
+            "fulfillable_quantity": r.get("fulfillable_quantity"),
+            "reserved_quantity": r.get("reserved_quantity"),
+            "inbound_quantity": r.get("inbound_quantity"),
+            "stranded_reason": r.get("stranded_reason"),
+            "is_stranded": True,
+        }
+        for r in rows
+    ]
+    return ToolResult(data={"items": items, "count": len(items)})
+
+
+_LOW_STOCK_LISTINGS_SQL = text(
+    """
+    SELECT
+        el.id              AS listing_id,
+        el.ebay_item_id,
+        el.listing_status,
+        el.price           AS ebay_price,
+        el.quantity        AS ebay_quantity,
+        a.id               AS inventory_id,
+        a.asin,
+        a.sku,
+        a.title,
+        a.fulfillable_quantity,
+        a.amazon_price
+    FROM ebay_listings el
+    JOIN amazon_inventory_items a ON a.id = el.amazon_item_id
+    WHERE el.listing_status IN ('active', 'published')
+      AND COALESCE(a.fulfillable_quantity, 0) < :min_stock
+    ORDER BY a.fulfillable_quantity ASC
+    LIMIT :lim
+    """
+)
+
+
+@register_tool(
+    "ebaycrosslister.db.low_stock_listings",
+    description=(
+        "Return active eBay listings whose linked Amazon inventory is "
+        "below a stock threshold (default 3). CROSSLISTER.md rule: "
+        "Amazon stok < 3 → eBay listing durdur."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "min_stock": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="amz",
+    cost_cents=0,
+)
+async def ebaycrosslister_db_low_stock(
+    args: dict[str, Any], ctx: ToolContext
+) -> ToolResult:
+    min_stock = int(args.get("min_stock", 3))
+    limit = int(args.get("limit", 50))
+    eng = _engine()
+    async with eng.connect() as conn:
+        result = await conn.execute(
+            _LOW_STOCK_LISTINGS_SQL, {"min_stock": min_stock, "lim": limit}
+        )
+        rows = [dict(r) for r in result.mappings()]
+
+    def _f(v: Any) -> float | None:
+        return float(v) if v is not None else None
+
+    items = [
+        {
+            "listing_id": r["listing_id"],
+            "ebay_item_id": r.get("ebay_item_id"),
+            "listing_status": r.get("listing_status"),
+            "ebay_price": _f(r.get("ebay_price")),
+            "ebay_quantity": r.get("ebay_quantity"),
+            "inventory_id": r.get("inventory_id"),
+            "asin": r.get("asin"),
+            "sku": r.get("sku"),
+            "title": (r.get("title") or "")[:120],
+            "fulfillable_quantity": r.get("fulfillable_quantity"),
+            "amazon_price": _f(r.get("amazon_price")),
+        }
+        for r in rows
+    ]
+    return ToolResult(
+        data={
+            "items": items,
+            "count": len(items),
+            "threshold": min_stock,
+        }
+    )
+
+
 @register_tool(
     "ebaycrosslister.db.listable_items",
     description=(

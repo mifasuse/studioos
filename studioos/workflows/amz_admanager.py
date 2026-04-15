@@ -19,6 +19,38 @@ from studioos.tools import invoke_from_state
 log = get_logger(__name__)
 
 
+# ADMANAGER.md lines 27–36 — budget tier + ACOS pause rules.
+BUDGET_TIERS = {
+    "high": {"daily_budget_usd": 30.0, "target_acos_pct": 25.0},
+    "medium": {"daily_budget_usd": 15.0, "target_acos_pct": 30.0},
+    "low": {"daily_budget_usd": 5.0, "target_acos_pct": 35.0},
+    "none": {"daily_budget_usd": 0.0, "target_acos_pct": None},
+}
+ACOS_PAUSE_THRESHOLD_PCT = 50.0
+ACOS_PAUSE_GRACE_HOURS = 48
+
+
+def classify_budget_tier(
+    monthly_sold: float | int | None,
+    rating: float | None,
+) -> str:
+    """ADMANAGER.md 27–30: map (monthly_sold, rating) → tier.
+
+      monthly_sold > 200 & rating > 4.0  → high
+      monthly_sold 50–200 & rating > 3.5 → medium
+      monthly_sold < 50                  → low / none
+    """
+    ms = float(monthly_sold or 0)
+    rt = float(rating or 0)
+    if ms > 200 and rt > 4.0:
+        return "high"
+    if 50 <= ms <= 200 and rt > 3.5:
+        return "medium"
+    if ms < 50:
+        return "none"
+    return "low"
+
+
 class AdState(TypedDict, total=False):
     agent_id: str
     studio_id: str
@@ -83,13 +115,33 @@ def node_diff(state: AdState) -> dict[str, Any]:
     cands = state.get("candidates") or []
     existing = dict(state.get("state") or {})
     seen = set(existing.get("ad_candidates_seen") or [])
-    new_finds = [c for c in cands if c.get("asin") not in seen]
-    for c in new_finds:
-        seen.add(c["asin"])
+    new_finds: list[dict[str, Any]] = []
+    tier_counts = {"high": 0, "medium": 0, "low": 0, "none": 0}
+    for c in cands:
+        asin = c.get("asin")
+        if not asin or asin in seen:
+            continue
+        tier = classify_budget_tier(c.get("monthly_sold"), c.get("rating"))
+        tier_counts[tier] = tier_counts.get(tier, 0) + 1
+        if tier == "none":
+            # Skip entirely — doesn't warrant ad spend per playbook.
+            seen.add(asin)
+            continue
+        tier_cfg = BUDGET_TIERS[tier]
+        new_finds.append(
+            {
+                **c,
+                "budget_tier": tier,
+                "suggested_daily_budget_usd": tier_cfg["daily_budget_usd"],
+                "suggested_target_acos_pct": tier_cfg["target_acos_pct"],
+            }
+        )
+        seen.add(asin)
     if len(seen) > 500:
         seen = set(list(seen)[-500:])
     existing["ad_candidates_seen"] = sorted(seen)
     existing["scans_total"] = int(existing.get("scans_total", 0)) + 1
+    existing["last_tier_counts"] = tier_counts
     return {"new_finds": new_finds, "state": existing}
 
 
@@ -119,6 +171,41 @@ async def node_emit(state: AdState) -> dict[str, Any]:
     events: list[dict[str, Any]] = []
     memories: list[dict[str, Any]] = []
     kpi_updates: list[dict[str, Any]] = []
+    approvals: list[dict[str, Any]] = []
+
+    # ADMANAGER.md: ACOS > 50% → 48 hours later pause.
+    # We don't have real ACOS metrics yet (AdsOptimizer bid-optimization
+    # is placeholder per DEV.md), so the best proxy is the campaign's
+    # own target_acos: if someone set a target > 50% the campaign is
+    # structurally unprofitable and needs review.
+    acos_paused = 0
+    for camp in state.get("active_campaigns") or []:
+        target_acos = camp.get("target_acos")
+        try:
+            target_acos_f = float(target_acos) if target_acos is not None else None
+        except (TypeError, ValueError):
+            target_acos_f = None
+        if target_acos_f is None or target_acos_f <= ACOS_PAUSE_THRESHOLD_PCT:
+            continue
+        approvals.append(
+            {
+                "reason": (
+                    f"ADMANAGER: pause campaign '{camp.get('name')}' — "
+                    f"target_acos {target_acos_f:.1f}% > "
+                    f"{ACOS_PAUSE_THRESHOLD_PCT:.0f}%"
+                ),
+                "payload": {
+                    "kind": "acos_pause",
+                    "campaign_id": camp.get("id"),
+                    "amazon_campaign_id": camp.get("amazon_campaign_id"),
+                    "name": camp.get("name"),
+                    "target_acos": target_acos_f,
+                    "grace_hours": ACOS_PAUSE_GRACE_HOURS,
+                },
+                "expires_in_seconds": 60 * 60 * ACOS_PAUSE_GRACE_HOURS,
+            }
+        )
+        acos_paused += 1
 
     for c in new_finds:
         events.append(
@@ -165,14 +252,18 @@ async def node_emit(state: AdState) -> dict[str, Any]:
     kpi_updates.append(
         {"name": "ad_candidates_new", "value": len(new_finds)}
     )
+    kpi_updates.append(
+        {"name": "ad_acos_pause_flags", "value": acos_paused}
+    )
 
     return {
         "events": events,
         "memories": memories,
         "kpi_updates": kpi_updates,
+        "approvals": approvals,
         "summary": (
             f"{len(state.get('candidates') or [])} candidates, "
-            f"{len(new_finds)} new"
+            f"{len(new_finds)} new, {acos_paused} acos-pause"
             + (" (notified)" if notified else "")
         ),
     }

@@ -23,6 +23,13 @@ from langgraph.graph import END, START, StateGraph
 from studioos.logging import get_logger
 from studioos.runtime.workflow_registry import register_workflow
 from studioos.tools import invoke_from_state
+from studioos.workflows.amz_analyst_scoring import (
+    VERDICT_TO_ANALYST,
+    compute_profit,
+    compute_risk,
+    decide,
+    verdict_confidence,
+)
 
 log = get_logger(__name__)
 
@@ -78,6 +85,10 @@ class AnalystState(TypedDict, total=False):
     event_kind: str  # "anomaly" | "discovery"
     anomaly: dict[str, Any]
     product: dict[str, Any] | None
+    pf_settings: dict[str, float]
+    profit: dict[str, Any]
+    risk: dict[str, int]
+    scoring_verdict: str
     verdict: dict[str, Any]
     events: list[dict[str, Any]]
     memories: list[dict[str, Any]]
@@ -125,7 +136,28 @@ async def node_load_context(state: AnalystState) -> dict[str, Any]:
             if items:
                 product = items[0]
 
-    return {"event_kind": kind, "anomaly": anomaly, "product": product}
+    pf_settings: dict[str, float] = {}
+    gs = await invoke_from_state(state, "pricefinder.db.global_settings", {})
+    if gs["status"] == "ok":
+        pf_settings = gs["data"] or {}
+
+    profit = compute_profit(product or {}, pf_settings)
+    risk = compute_risk(product or {})
+    scoring_verdict = decide(
+        risk["total"],
+        profit.get("roi_pct"),
+        (product or {}).get("monthly_sold"),
+    )
+
+    return {
+        "event_kind": kind,
+        "anomaly": anomaly,
+        "product": product,
+        "pf_settings": pf_settings,
+        "profit": dict(profit),
+        "risk": dict(risk),
+        "scoring_verdict": scoring_verdict,
+    }
 
 
 def _build_messages(
@@ -142,16 +174,28 @@ def _build_messages(
     memory_block = "\n".join(memory_lines) if memory_lines else "(none)"
 
     label = "Newly discovered opportunity" if kind == "discovery" else "Anomaly"
+    profit = state.get("profit") or {}
+    risk = state.get("risk") or {}
+    scoring_verdict = state.get("scoring_verdict") or "?"
     user = f"""{label}:
 {json.dumps(anomaly, ensure_ascii=False)}
 
 Product context:
 {json.dumps(product or {}, ensure_ascii=False, default=str)[:1500]}
 
+Deterministic analysis (already computed — do not recompute, just cite
+and add rationale text):
+- profit: {json.dumps(profit, ensure_ascii=False)}
+- risk (1-5 each, total of 5): {json.dumps(risk, ensure_ascii=False)}
+- matrix verdict: {scoring_verdict}
+  (GUCLU_AL/AL → accept, IZLE → uncertain, GEC → reject)
+
 Recent related memories:
 {memory_block}
 
-Reply with the JSON object only."""
+Reply with the JSON object only — verdict must match the matrix
+unless you can explicitly justify overriding it (e.g. the product
+context reveals a hidden risk the 5-dim score missed)."""
 
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -239,6 +283,29 @@ def node_decide(state: AnalystState) -> dict[str, Any]:
     confidence = float(verdict.get("confidence", 0.0))
     asin = anomaly.get("asin")
     kind = state.get("event_kind") or "anomaly"
+    profit = state.get("profit") or {}
+    risk = state.get("risk") or {}
+    scoring_verdict = state.get("scoring_verdict") or "GEC"
+
+    # Deterministic fallback: if the LLM gave up, trust the matrix.
+    if decision == "uncertain" and scoring_verdict in VERDICT_TO_ANALYST:
+        det_decision = VERDICT_TO_ANALYST[scoring_verdict]
+        det_conf = verdict_confidence(
+            scoring_verdict, int(risk.get("total", 25)), profit.get("roi_pct")
+        )
+        if det_decision != "uncertain" or det_conf >= 0.5:
+            decision = det_decision
+            confidence = det_conf
+            verdict = {
+                **verdict,
+                "verdict": decision,
+                "confidence": confidence,
+                "rationale": (
+                    verdict.get("rationale")
+                    or f"deterministic matrix: {scoring_verdict} "
+                    f"(risk={risk.get('total')}, roi={profit.get('roi_pct')}%)"
+                )[:280],
+            }
 
     events: list[dict[str, Any]] = []
     memories: list[dict[str, Any]] = []
@@ -270,6 +337,18 @@ def node_decide(state: AnalystState) -> dict[str, Any]:
                     "confidence": confidence,
                     "rationale": verdict.get("rationale", ""),
                     "recommended_action": verdict.get("recommended_action"),
+                    "matrix_verdict": scoring_verdict,
+                    "net_profit_usd": profit.get("net_profit_usd"),
+                    "roi_pct": profit.get("roi_pct"),
+                    "margin_pct": profit.get("margin_pct"),
+                    "risk_total": risk.get("total"),
+                    "risk_breakdown": {
+                        "price": risk.get("price"),
+                        "demand": risk.get("demand"),
+                        "fx": risk.get("fx"),
+                        "category": risk.get("category"),
+                        "quality": risk.get("quality"),
+                    },
                 },
                 "idempotency_key": (
                     f"amz_analyst:{state['run_id']}:confirmed:{asin}"

@@ -19,6 +19,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from studioos.approvals.escalation import classify, to_approval_row
 from studioos.logging import get_logger
 from studioos.runtime.workflow_registry import register_workflow
 from studioos.tools import invoke_from_state
@@ -38,9 +39,11 @@ class ScoutState(TypedDict, total=False):
     # populated during run
     candidates: list[dict[str, Any]]
     new_finds: list[dict[str, Any]]
+    aggressive_finds: list[dict[str, Any]]
     events: list[dict[str, Any]]
     memories: list[dict[str, Any]]
     kpi_updates: list[dict[str, Any]]
+    approvals: list[dict[str, Any]]
     summary: str
 
 
@@ -57,6 +60,23 @@ def _scout_params(state: ScoutState) -> dict[str, Any]:
         "min_profit_dollars": float(goals.get("min_profit_dollars", 10.0)),
         "min_tr_price": float(goals.get("min_tr_price", 5.0)),
     }
+
+
+def _weight_flag(item: dict[str, Any]) -> bool:
+    """SCOUT.md rule: weight > 2.3 kg → kargo maliyeti yeniden hesapla.
+
+    We can't recompute inside the workflow (PF's calculator already baked
+    shipping into estimated_profit), so we flag these for the analyst to
+    re-verify and drop marginal ones.
+    """
+    w = item.get("package_weight_g") or 0
+    try:
+        return float(w) > 2300
+    except (TypeError, ValueError):
+        return False
+
+
+AGGRESSIVE_ROI_DEFAULT = 100.0
 
 
 async def node_scan(state: ScoutState) -> dict[str, Any]:
@@ -79,13 +99,32 @@ def node_diff(state: ScoutState) -> dict[str, Any]:
     candidates = state.get("candidates") or []
     existing_state = dict(state.get("state") or {})
     discovered = set(existing_state.get("discovered_asins") or [])
+    goals = state.get("goals") or {}
+    aggressive_threshold = float(
+        goals.get("aggressive_roi_threshold", AGGRESSIVE_ROI_DEFAULT)
+    )
+    marginal_threshold = float(goals.get("marginal_roi_threshold", 40.0))
 
     new_finds: list[dict[str, Any]] = []
+    aggressive_finds: list[dict[str, Any]] = []
     for c in candidates:
         asin = c.get("asin")
         if not asin or asin in discovered:
             continue
-        new_finds.append(c)
+        # SCOUT.md: weight > 2.3 kg + marginal ROI → skip entirely
+        # (shipping cost likely understated in PF's calculator).
+        roi = c.get("roi_percent") or 0
+        heavy = _weight_flag(c)
+        if heavy and roi < marginal_threshold:
+            existing_state["heavy_skipped_total"] = int(
+                existing_state.get("heavy_skipped_total", 0)
+            ) + 1
+            continue
+        c = {**c, "heavy_weight_flag": heavy}
+        if roi >= aggressive_threshold:
+            aggressive_finds.append(c)
+        else:
+            new_finds.append(c)
         discovered.add(asin)
 
     # Cap how many ASIN ids we hold to avoid unbounded state growth.
@@ -94,15 +133,19 @@ def node_diff(state: ScoutState) -> dict[str, Any]:
 
     existing_state["discovered_asins"] = sorted(discovered)
     existing_state["last_scan_count"] = len(candidates)
-    existing_state["last_new_count"] = len(new_finds)
+    existing_state["last_new_count"] = len(new_finds) + len(aggressive_finds)
     existing_state["scans_total"] = int(
         existing_state.get("scans_total", 0)
     ) + 1
     existing_state["discoveries_total"] = int(
         existing_state.get("discoveries_total", 0)
-    ) + len(new_finds)
+    ) + len(new_finds) + len(aggressive_finds)
 
-    return {"new_finds": new_finds, "state": existing_state}
+    return {
+        "new_finds": new_finds,
+        "aggressive_finds": aggressive_finds,
+        "state": existing_state,
+    }
 
 
 def _format_digest(new_finds: list[dict[str, Any]]) -> str:
@@ -120,8 +163,17 @@ def _format_digest(new_finds: list[dict[str, Any]]) -> str:
         profit_str = f"${profit:.0f}" if isinstance(profit, (int, float)) else "—"
         ms_str = f"{ms}/mo" if ms else "—"
         rank_str = f"#{rank}" if rank else "—"
+        flags = []
+        if c.get("heavy_weight_flag"):
+            flags.append("🏋️>2.3kg")
+        try:
+            if (c.get("roi_percent") or 0) >= AGGRESSIVE_ROI_DEFAULT:
+                flags.append("⚠️CEO-gate")
+        except Exception:
+            pass
+        flag_str = f" [{', '.join(flags)}]" if flags else ""
         lines.append(
-            f"• `{asin}` ROI {roi_str} · {profit_str} · {ms_str} · rank {rank_str}\n"
+            f"• `{asin}` ROI {roi_str} · {profit_str} · {ms_str} · rank {rank_str}{flag_str}\n"
             f"  {title}"
         )
     if len(new_finds) > 10:
@@ -131,9 +183,42 @@ def _format_digest(new_finds: list[dict[str, Any]]) -> str:
 
 async def node_emit(state: ScoutState) -> dict[str, Any]:
     new_finds = state.get("new_finds") or []
+    aggressive_finds = state.get("aggressive_finds") or []
     events: list[dict[str, Any]] = []
     memories: list[dict[str, Any]] = []
     kpi_updates: list[dict[str, Any]] = []
+    approvals: list[dict[str, Any]] = []
+
+    esc = classify("aggressive_roi_100_plus")
+    for c in aggressive_finds:
+        asin = c.get("asin")
+        if not asin:
+            continue
+        approvals.append(
+            to_approval_row(
+                esc,
+                reason=(
+                    f"Scout aggressive ROI {c.get('roi_percent')}% on "
+                    f"{asin} — ROI>{AGGRESSIVE_ROI_DEFAULT:.0f}% needs CEO signoff"
+                ),
+                payload={
+                    "asin": asin,
+                    "candidate": c,
+                },
+                expires_in_seconds=60 * 60 * 24 * 3,
+            )
+        )
+        memories.append(
+            {
+                "content": (
+                    f"Aggressive-ROI {asin} flagged for CEO approval: "
+                    f"ROI {c.get('roi_percent')}%, "
+                    f"profit ${c.get('estimated_profit')}"
+                ),
+                "tags": ["amz", "aggressive", asin],
+                "importance": 0.8,
+            }
+        )
 
     for c in new_finds:
         asin = c.get("asin")
@@ -179,8 +264,8 @@ async def node_emit(state: ScoutState) -> dict[str, Any]:
 
     # Single digest notification, only if we actually found something.
     notification_sent = False
-    if new_finds:
-        text = _format_digest(new_finds)
+    if new_finds or aggressive_finds:
+        text = _format_digest(new_finds + aggressive_finds)
         notify = await invoke_from_state(
             state,
             "telegram.notify",
@@ -211,7 +296,7 @@ async def node_emit(state: ScoutState) -> dict[str, Any]:
 
     summary = (
         f"Scouted {len(state.get('candidates') or [])} candidates, "
-        f"{len(new_finds)} new"
+        f"{len(new_finds)} new, {len(aggressive_finds)} aggressive(CEO)"
         + (" (notified)" if notification_sent else "")
     )
 
@@ -219,6 +304,7 @@ async def node_emit(state: ScoutState) -> dict[str, Any]:
         "events": events,
         "memories": memories,
         "kpi_updates": kpi_updates,
+        "approvals": approvals,
         "summary": summary,
     }
 
