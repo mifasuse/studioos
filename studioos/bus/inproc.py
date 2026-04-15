@@ -100,8 +100,21 @@ class InProcBus:
         min_idle_ms: int,
         count: int = 10,
     ) -> list[DeliveredMessage]:
-        # InProc has no idle timing — no reclaim needed; tests exercise redis.
-        return []
+        # InProc has no idle timing — always redeliver pending so retry + DLQ
+        # behavior can be exercised deterministically in tests.
+        async with self._cond:
+            grp = self._stream.groups.setdefault(group, _Group())
+            out: list[DeliveredMessage] = []
+            for entry in list(grp.pending.values())[:count]:
+                entry.delivery_count += 1
+                out.append(
+                    DeliveredMessage(
+                        bus_id=entry.bus_id,
+                        envelope=entry.envelope,
+                        delivery_count=entry.delivery_count,
+                    )
+                )
+            return out
 
     async def ack(self, group: str, bus_id: str) -> None:
         async with self._cond:
