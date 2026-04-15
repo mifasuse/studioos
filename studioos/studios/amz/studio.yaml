@@ -18,6 +18,16 @@ templates:
     display_name: "AMZ Executor"
     description: "Relays confirmed opportunities to Telegram (phase 1, notify-only)"
     workflow_ref: amz_executor
+  - id: amz_scout
+    version: 1
+    display_name: "AMZ Scout"
+    description: "Periodic PriceFinder scan for new high-ROI opportunities, sends a Telegram digest"
+    workflow_ref: amz_scout
+  - id: amz_pricer
+    version: 1
+    display_name: "AMZ Pricer"
+    description: "Periodic BuyBoxPricer scan for lost-buybox listings, recommends reprices to Telegram"
+    workflow_ref: amz_pricer
 agents:
   - id: amz-monitor
     template_id: amz_monitor
@@ -61,6 +71,38 @@ agents:
     heartbeat_config: {}
     goals: {}
     tool_scope:
+      - telegram.notify
+      - memory.search
+  - id: amz-scout
+    template_id: amz_scout
+    template_version: 1
+    display_name: "AMZ Scout"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "@every 6h"
+    goals:
+      scan_limit: 20
+      min_roi_pct: 20.0
+      max_sales_rank: 100000
+      min_monthly_sold: 30
+      min_rating: 3.5
+      min_review_count: 10
+    tool_scope:
+      - pricefinder.db.scout_candidates
+      - telegram.notify
+      - memory.search
+  - id: amz-pricer
+    template_id: amz_pricer
+    template_version: 1
+    display_name: "AMZ Pricer"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "@every 30m"
+    goals:
+      scan_limit: 25
+      underbid_pct: 1.0
+    tool_scope:
+      - buyboxpricer.db.lost_buybox
       - telegram.notify
       - memory.search
 subscriptions:

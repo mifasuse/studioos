@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     # Direct read-only DB access for batch lookups
     pricefinder_db_url: str = ""
 
+    # BuyBoxPricer (M12)
+    buyboxpricer_db_url: str = ""
+
     # Notifications (M11)
     telegram_bot_token: str = ""
     telegram_default_chat_id: str = ""

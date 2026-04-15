@@ -429,6 +429,129 @@ async def pricefinder_db_top_opportunities(
     )
 
 
+_SCOUT_SQL = text(
+    """
+    SELECT
+        p.asin,
+        p.title,
+        p.brand,
+        p.tr_price,
+        p.tr_source,
+        u.buybox_price,
+        u.lowest_price,
+        u.fba_lowest_price,
+        u.sales_rank,
+        u.monthly_sold,
+        u.review_count,
+        u.rating,
+        u.fba_offer_count,
+        u.new_offer_count,
+        u.ebay_new_price,
+        o.id   AS opportunity_id,
+        o.estimated_profit,
+        o.profit_margin_percent,
+        o.roi_percent
+    FROM products p
+    JOIN us_market_data u ON u.product_id = p.id
+    LEFT JOIN LATERAL (
+        SELECT *
+        FROM arbitrage_opportunities ao
+        WHERE ao.product_id = p.id
+          AND ao.status = 'active'
+        ORDER BY ao.found_at DESC NULLS LAST
+        LIMIT 1
+    ) o ON TRUE
+    WHERE p.in_stock = true
+      AND p.is_active = true
+      AND u.buybox_price IS NOT NULL
+      AND COALESCE(u.monthly_sold, 0) >= :min_monthly_sold
+      AND COALESCE(u.sales_rank, 999999999) <= :max_sales_rank
+      AND COALESCE(u.rating, 0) >= :min_rating
+      AND COALESCE(u.review_count, 0) >= :min_review_count
+      AND COALESCE(o.roi_percent, -1) >= :min_roi_pct
+      AND COALESCE(p.tr_price, 0) >= 1
+    ORDER BY o.roi_percent DESC NULLS LAST,
+             o.estimated_profit DESC NULLS LAST
+    LIMIT :lim
+    """
+)
+
+
+@register_tool(
+    "pricefinder.db.scout_candidates",
+    description=(
+        "Run the OpenClaw amz-scout filter against the PriceFinder "
+        "replica and return the top-N candidates: ROI floor, sales "
+        "rank ceiling, monthly_sold floor, rating + review minimums, "
+        "in-stock, valid TR price."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer"},
+            "min_roi_pct": {"type": "number"},
+            "max_sales_rank": {"type": "integer"},
+            "min_monthly_sold": {"type": "integer"},
+            "min_rating": {"type": "number"},
+            "min_review_count": {"type": "integer"},
+        },
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="amz",
+    cost_cents=0,
+)
+async def pricefinder_db_scout_candidates(
+    args: dict[str, Any], ctx: ToolContext
+) -> ToolResult:
+    params = {
+        "lim": int(args.get("limit", 20)),
+        "min_roi_pct": float(args.get("min_roi_pct", 20.0)),
+        "max_sales_rank": int(args.get("max_sales_rank", 100_000)),
+        "min_monthly_sold": int(args.get("min_monthly_sold", 30)),
+        "min_rating": float(args.get("min_rating", 3.5)),
+        "min_review_count": int(args.get("min_review_count", 10)),
+    }
+    engine = _pf_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(_SCOUT_SQL, params)
+        rows = [dict(r) for r in result.mappings()]
+
+    def _f(v: Any) -> float | None:
+        return float(v) if v is not None else None
+
+    items = [
+        {
+            "asin": r["asin"],
+            "title": (r.get("title") or "")[:200],
+            "brand": r.get("brand"),
+            "tr_price": _f(r.get("tr_price")),
+            "tr_source": r.get("tr_source"),
+            "buybox_price": _f(r.get("buybox_price")),
+            "fba_lowest_price": _f(r.get("fba_lowest_price")),
+            "sales_rank": r.get("sales_rank"),
+            "monthly_sold": r.get("monthly_sold"),
+            "review_count": r.get("review_count"),
+            "rating": _f(r.get("rating")),
+            "fba_offer_count": r.get("fba_offer_count"),
+            "new_offer_count": r.get("new_offer_count"),
+            "ebay_new_price": _f(r.get("ebay_new_price")),
+            "opportunity_id": r.get("opportunity_id"),
+            "estimated_profit": _f(r.get("estimated_profit")),
+            "profit_margin_percent": _f(r.get("profit_margin_percent")),
+            "roi_percent": _f(r.get("roi_percent")),
+        }
+        for r in rows
+    ]
+    return ToolResult(
+        data={
+            "items": items,
+            "count": len(items),
+            "filters": params,
+        }
+    )
+
+
 @register_tool(
     "pricefinder.lookup_asin",
     description=(

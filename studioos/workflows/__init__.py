@@ -8,6 +8,8 @@ from studioos.workflows import (  # noqa: F401
     amz_analyst,
     amz_executor,
     amz_monitor,
+    amz_pricer,
+    amz_scout,
     analyst_test,
     scout_test,
 )
@@ -18,4 +20,6 @@ __all__ = [
     "amz_monitor",
     "amz_analyst",
     "amz_executor",
+    "amz_scout",
+    "amz_pricer",
 ]

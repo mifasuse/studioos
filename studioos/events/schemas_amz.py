@@ -55,7 +55,42 @@ class OpportunityRejectedV1(BaseModel):
     rationale: str
 
 
+class OpportunityDiscoveredV1(BaseModel):
+    """amz.opportunity.discovered — scout surfaces a new candidate."""
+
+    asin: str = Field(min_length=10, max_length=10)
+    marketplace: str = "US"
+    title: str | None = None
+    brand: str | None = None
+    tr_price_try: float | None = None
+    buybox_price_usd: float | None = None
+    estimated_profit_usd: float | None = None
+    profit_margin_pct: float | None = None
+    roi_pct: float | None = None
+    monthly_sold: int | None = None
+    sales_rank: int | None = None
+    review_count: int | None = None
+    rating: float | None = None
+    fba_offer_count: int | None = None
+
+
+class RepriceRecommendedV1(BaseModel):
+    """amz.reprice.recommended — pricer suggests a price change (notify-only)."""
+
+    asin: str = Field(min_length=10, max_length=10)
+    sku: str
+    listing_id: int
+    current_price: float
+    proposed_price: float
+    buy_box_price: float
+    buybox_seller_name: str | None = None
+    delta: float
+    clamped_to_floor: bool = False
+
+
 registry.register("amz.price.checked", 1, PriceCheckedV1)
 registry.register("amz.price.anomaly_detected", 1, PriceAnomalyDetectedV1)
 registry.register("amz.opportunity.confirmed", 1, OpportunityConfirmedV1)
 registry.register("amz.opportunity.rejected", 1, OpportunityRejectedV1)
+registry.register("amz.opportunity.discovered", 1, OpportunityDiscoveredV1)
+registry.register("amz.reprice.recommended", 1, RepriceRecommendedV1)
