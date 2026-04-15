@@ -92,9 +92,47 @@ class RepriceRecommendedV1(BaseModel):
     clamped_to_floor: bool = False
 
 
+class QASmokeFailedV1(BaseModel):
+    """amz.qa.smoke_failed — emitted by amz-qa when any infra healthcheck fails."""
+
+    failed_services: list[str]
+    details: list[dict] | None = None
+
+
+class CrossListCandidateV1(BaseModel):
+    """amz.crosslist.candidate — emitted by amz-crosslister for new eBay arbitrage finds."""
+
+    asin: str = Field(min_length=10, max_length=10)
+    title: str | None = None
+    brand: str | None = None
+    amazon_buybox_usd: float | None = None
+    ebay_new_usd: float | None = None
+    premium_pct: float | None = None
+    monthly_sold: int | None = None
+    fba_offer_count: int | None = None
+    sales_rank: int | None = None
+
+
+class AdCandidateV1(BaseModel):
+    """amz.ad.candidate — emitted by amz-admanager for new PPC-eligible products."""
+
+    asin: str = Field(min_length=10, max_length=10)
+    title: str | None = None
+    brand: str | None = None
+    buybox_usd: float | None = None
+    monthly_sold: int | None = None
+    review_count: int | None = None
+    rating: float | None = None
+    fba_offer_count: int | None = None
+    sales_rank: int | None = None
+
+
 registry.register("amz.price.checked", 1, PriceCheckedV1)
 registry.register("amz.price.anomaly_detected", 1, PriceAnomalyDetectedV1)
 registry.register("amz.opportunity.confirmed", 1, OpportunityConfirmedV1)
 registry.register("amz.opportunity.rejected", 1, OpportunityRejectedV1)
 registry.register("amz.opportunity.discovered", 1, OpportunityDiscoveredV1)
 registry.register("amz.reprice.recommended", 1, RepriceRecommendedV1)
+registry.register("amz.qa.smoke_failed", 1, QASmokeFailedV1)
+registry.register("amz.crosslist.candidate", 1, CrossListCandidateV1)
+registry.register("amz.ad.candidate", 1, AdCandidateV1)
