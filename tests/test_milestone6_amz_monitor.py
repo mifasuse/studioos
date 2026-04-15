@@ -1,29 +1,25 @@
 """Milestone 6 phase 1 — AMZ price monitor vertical slice.
 
-Uses httpx.MockTransport to stub PriceFinder so the test runs hermetically.
-Verifies:
-  - amz.price.checked events recorded for every ASIN
-  - anomaly detection fires when delta crosses the threshold
-  - audit row for pricefinder.lookup_asin written
-  - KPI snapshots + memory written
+The workflow calls the batch DB tool `pricefinder.db.lookup_asins`. We
+stub the tool handler directly so the test runs hermetically without
+needing a live PriceFinder DB. A separate smoke test covers the real
+asyncpg path in prod.
 """
 from __future__ import annotations
 
 import asyncio
 from typing import Any
-from unittest.mock import patch
 
-import httpx
 import pytest
 from sqlalchemy import select
 
-from studioos.config import settings
 from studioos.db import session_scope
 from studioos.models import AgentState, Event, KpiSnapshot, MemorySemantic, ToolCall
 from studioos.runtime.consumer import drain_once
 from studioos.runtime.dispatcher import dispatch_once
 from studioos.runtime.outbox import publish_batch
 from studioos.runtime.triggers import create_pending_run
+from studioos.tools.base import ToolResult
 
 
 async def _drain(max_iters: int = 15) -> None:
@@ -36,78 +32,74 @@ async def _drain(max_iters: int = 15) -> None:
         await asyncio.sleep(0)
 
 
-def _make_mock_transport(responses: dict[str, float]) -> httpx.MockTransport:
-    """Emulate the PriceFinder OAuth2 + /products search endpoints."""
+def _mock_batch_handler(prices: dict[str, float]):
+    """Return a handler that mimics pricefinder.db.lookup_asins."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        if path.endswith("/auth/token"):
-            return httpx.Response(
-                200,
-                json={"access_token": "test-token", "token_type": "bearer"},
-            )
-        if path.endswith("/products/") or path.endswith("/products"):
-            asin = (request.url.params.get("search") or "").upper()
-            price = responses.get(asin)
+    async def handler(args: dict[str, Any], ctx: Any) -> ToolResult:
+        asins = [a.upper() for a in args["asins"]]
+        items = []
+        missing = []
+        for asin in asins:
+            price = prices.get(asin)
             if price is None:
-                return httpx.Response(
-                    200,
-                    json={"items": [], "total": 0, "page": 1, "pages": 0},
-                )
-            return httpx.Response(
-                200,
-                json={
-                    "items": [
-                        {
-                            "id": 999,
-                            "asin": asin,
-                            "title": f"Mock product {asin}",
-                            "brand": "MockBrand",
-                            "us_market_data": {
-                                "buybox_price": str(price),
-                                "amazon_price": None,
-                                "lowest_price": str(price),
-                                "last_update": "2026-04-15T00:00:00+00:00",
-                            },
-                            "us_profit": 10.0,
-                            "us_roi": 20.0,
-                            "us_margin": 15.0,
-                        }
-                    ],
-                    "total": 1,
-                    "page": 1,
-                    "pages": 1,
-                },
+                missing.append(asin)
+                continue
+            items.append(
+                {
+                    "asin": asin,
+                    "product_id": 999,
+                    "title": f"Mock {asin}",
+                    "brand": "MockBrand",
+                    "price": price,
+                    "currency": "USD",
+                    "price_source": "buybox",
+                    "fba_offer_count": 0,
+                    "new_offer_count": 1,
+                    "sales_rank": None,
+                    "last_update": "2026-04-15T00:00:00",
+                    "tr_price": None,
+                }
             )
-        return httpx.Response(404, json={"detail": "not mocked"})
+        return ToolResult(
+            data={"items": items, "found": len(items), "missing": missing}
+        )
 
-    return httpx.MockTransport(handler)
+    return handler
 
 
-def _patch_httpx(transport: httpx.MockTransport):
-    real_client = httpx.AsyncClient
+class _ToolPatch:
+    """Swap the registered Tool with one wrapping a stub handler."""
 
-    def factory(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
-        kwargs["transport"] = transport
-        return real_client(*args, **kwargs)
+    def __init__(self, name: str, handler: Any) -> None:
+        self._name = name
+        self._handler = handler
+        self._original: Any = None
 
-    # Also reset the cached PF client so each test rebuilds its token cache.
-    import studioos.tools.amz as amz_mod
+    def __enter__(self) -> None:
+        from dataclasses import replace
 
-    amz_mod._client_singleton = None  # type: ignore[attr-defined]
-    return patch("studioos.tools.amz.httpx.AsyncClient", factory)
+        from studioos.tools.registry import _REGISTRY
+
+        self._original = _REGISTRY[self._name]
+        _REGISTRY[self._name] = replace(self._original, handler=self._handler)
+
+    def __exit__(self, *exc: Any) -> None:
+        from studioos.tools.registry import _REGISTRY
+
+        _REGISTRY[self._name] = self._original
+
+
+def _patch_db_tool(prices: dict[str, float]) -> _ToolPatch:
+    return _ToolPatch(
+        "pricefinder.db.lookup_asins", _mock_batch_handler(prices)
+    )
 
 
 @pytest.mark.asyncio
 async def test_amz_monitor_first_scan_records_baseline(db_session) -> None:
-    settings.pricefinder_url = "http://pricefinder.test/api/v1"
-    settings.pricefinder_username = "test@test"
-    settings.pricefinder_password = "pw"
-    transport = _make_mock_transport(
+    with _patch_db_tool(
         {"B00MFMV6S6": 29.99, "B001JYN1IE": 19.50, "B015LJPJUU": 149.00}
-    )
-
-    with _patch_httpx(transport):
+    ):
         async with session_scope() as session:
             await create_pending_run(
                 session,
@@ -131,7 +123,7 @@ async def test_amz_monitor_first_scan_records_baseline(db_session) -> None:
             (
                 await session.execute(
                     select(ToolCall).where(
-                        ToolCall.tool_name == "pricefinder.lookup_asin"
+                        ToolCall.tool_name == "pricefinder.db.lookup_asins"
                     )
                 )
             )
@@ -151,12 +143,11 @@ async def test_amz_monitor_first_scan_records_baseline(db_session) -> None:
         )
 
     assert len(events) == 3
-    assert len(tool_calls) == 3
-    assert all(t.status == "ok" for t in tool_calls)
+    assert len(tool_calls) == 1  # batch = single call for all ASINs
+    assert tool_calls[0].status == "ok"
     kpi_names = {k.name for k in kpis}
     assert {"asins_scanned", "anomalies_found"} <= kpi_names
 
-    # No baseline existed so no anomalies on the first scan.
     anomaly_events = [
         e for e in events if e.event_type == "amz.price.anomaly_detected"
     ]
@@ -165,15 +156,8 @@ async def test_amz_monitor_first_scan_records_baseline(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_amz_monitor_detects_anomaly_on_second_scan(db_session) -> None:
-    settings.pricefinder_url = "http://pricefinder.test/api/v1"
-    settings.pricefinder_username = "test@test"
-    settings.pricefinder_password = "pw"
-
-    # First scan: seed baseline
-    with _patch_httpx(
-        _make_mock_transport(
-            {"B00MFMV6S6": 29.99, "B001JYN1IE": 19.50, "B015LJPJUU": 149.00}
-        )
+    with _patch_db_tool(
+        {"B00MFMV6S6": 29.99, "B001JYN1IE": 19.50, "B015LJPJUU": 149.00}
     ):
         async with session_scope() as session:
             await create_pending_run(
@@ -184,15 +168,8 @@ async def test_amz_monitor_detects_anomaly_on_second_scan(db_session) -> None:
             )
         await _drain()
 
-    # Second scan: drop one ASIN by 10% → well above the 5% threshold
-    with _patch_httpx(
-        _make_mock_transport(
-            {
-                "B00MFMV6S6": 26.99,  # -10%
-                "B001JYN1IE": 19.50,
-                "B015LJPJUU": 149.00,
-            }
-        )
+    with _patch_db_tool(
+        {"B00MFMV6S6": 26.99, "B001JYN1IE": 19.50, "B015LJPJUU": 149.00}
     ):
         async with session_scope() as session:
             await create_pending_run(

@@ -60,26 +60,37 @@ def _watchlist(state: MonitorState) -> list[str]:
 
 
 async def node_scan_watchlist(state: MonitorState) -> dict[str, Any]:
-    observations: list[dict[str, Any]] = []
-    for asin in _watchlist(state):
-        result = await invoke_from_state(
-            state, "pricefinder.lookup_asin", {"asin": asin}
+    asins = _watchlist(state)
+    if not asins:
+        return {"observations": []}
+
+    result = await invoke_from_state(
+        state, "pricefinder.db.lookup_asins", {"asins": asins}
+    )
+    if result["status"] != "ok":
+        log.warning(
+            "amz_monitor.batch_lookup_failed",
+            status=result["status"],
+            error=result.get("error"),
         )
-        if result["status"] != "ok":
-            log.warning(
-                "amz_monitor.lookup_failed",
-                asin=asin,
-                status=result["status"],
-                error=result.get("error"),
-            )
-            continue
-        data = result["data"]
+        return {"observations": []}
+
+    data = result["data"]
+    if data.get("missing"):
+        log.info(
+            "amz_monitor.missing_asins",
+            missing=data["missing"],
+            found=data.get("found", 0),
+        )
+
+    observations: list[dict[str, Any]] = []
+    for item in data.get("items", []):
         observations.append(
             {
-                "asin": data["asin"],
-                "marketplace": data.get("marketplace", "US"),
-                "price": float(data["price"]),
-                "currency": data.get("currency", "USD"),
+                "asin": item["asin"],
+                "marketplace": "US",
+                "price": float(item["price"]),
+                "currency": item.get("currency", "USD"),
             }
         )
     return {"observations": observations}

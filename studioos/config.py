@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     pricefinder_username: str = ""
     pricefinder_password: str = ""
     pricefinder_timeout_seconds: float = 15.0
+    # Direct read-only DB access for batch lookups
+    pricefinder_db_url: str = ""
 
 
 settings = Settings()

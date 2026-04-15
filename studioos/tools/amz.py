@@ -1,8 +1,16 @@
-"""AMZ tool adapters — wrappers over existing PriceFinder/BuyBoxPricer HTTP APIs.
+"""AMZ tool adapters — wrappers over existing PriceFinder tool service.
 
-PriceFinder runs on the same host behind traefik at
-`https://pricefinder.mifasuse.com/api/v1`. It uses OAuth2 password-flow
-tokens; we hold a single shared token per process and refresh on 401.
+Two integration paths coexist:
+
+1. HTTP API (`pricefinder.lookup_asin`) — OAuth2-authenticated, hits
+   `https://pricefinder.mifasuse.com/api/v1`. Use when you need
+   business-logic output (profit, ROI, exchange rate) or write access
+   in the future.
+
+2. Direct read-only DB (`pricefinder.db.lookup_asins`) — batch-friendly,
+   ~10ms per call, no auth round-trip. Read-only postgres role
+   `studioos_ro` with SELECT on a narrow table set. Use for high-volume
+   monitor loops and analyst scans.
 """
 from __future__ import annotations
 
@@ -11,6 +19,8 @@ import time
 from typing import Any
 
 import httpx
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from studioos.config import settings
 from studioos.logging import get_logger
@@ -140,6 +150,138 @@ def _pick_price(us_data: dict[str, Any] | None) -> float | None:
             except (TypeError, ValueError):
                 continue
     return None
+
+
+# ---------------------------------------------------------------------------
+# Direct read-only DB path — batch lookups for monitor/analyst loops
+# ---------------------------------------------------------------------------
+
+_pf_engines: dict[int, AsyncEngine] = {}
+
+
+def _pf_engine() -> AsyncEngine:
+    """Return a per-event-loop asyncpg engine for pricefinder RO."""
+    if not settings.pricefinder_db_url:
+        raise ToolError("STUDIOOS_PRICEFINDER_DB_URL is not configured")
+    key = id(asyncio.get_event_loop())
+    engine = _pf_engines.get(key)
+    if engine is None:
+        from sqlalchemy.pool import NullPool
+
+        engine = create_async_engine(
+            settings.pricefinder_db_url,
+            poolclass=NullPool,
+            pool_pre_ping=True,
+        )
+        _pf_engines[key] = engine
+    return engine
+
+
+_BATCH_SQL = text(
+    """
+    SELECT
+        p.id,
+        p.asin,
+        p.title,
+        p.brand,
+        p.tr_price,
+        u.buybox_price,
+        u.lowest_price,
+        u.new_3p_price,
+        u.amazon_price,
+        u.fba_offer_count,
+        u.new_offer_count,
+        u.sales_rank,
+        u.last_update
+    FROM products p
+    LEFT JOIN us_market_data u ON u.product_id = p.id
+    WHERE p.asin = ANY(:asins)
+    """
+)
+
+
+def _pick_db_price(row: dict[str, Any]) -> tuple[float | None, str | None]:
+    for key in ("buybox_price", "lowest_price", "new_3p_price", "amazon_price"):
+        val = row.get(key)
+        if val is not None:
+            try:
+                return float(val), key.replace("_price", "")
+            except (TypeError, ValueError):
+                continue
+    return None, None
+
+
+@register_tool(
+    "pricefinder.db.lookup_asins",
+    description=(
+        "Batch-read current US prices for a list of ASINs straight from "
+        "the PriceFinder read-only replica. Single round-trip, no auth, "
+        "use for monitor/analyst scans."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "asins": {
+                "type": "array",
+                "items": {"type": "string"},
+            }
+        },
+        "required": ["asins"],
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="amz",
+    cost_cents=0,
+)
+async def pricefinder_db_lookup_asins(
+    args: dict[str, Any], ctx: ToolContext
+) -> ToolResult:
+    asins = [a.strip().upper() for a in args["asins"] if a and a.strip()]
+    if not asins:
+        return ToolResult(data={"items": [], "found": 0, "missing": []})
+    engine = _pf_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(_BATCH_SQL, {"asins": asins})
+        rows = [dict(r) for r in result.mappings()]
+
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        price, source = _pick_db_price(row)
+        if price is None:
+            continue
+        asin = row["asin"]
+        seen.add(asin)
+        items.append(
+            {
+                "asin": asin,
+                "product_id": row["id"],
+                "title": (row.get("title") or "")[:120],
+                "brand": row.get("brand"),
+                "price": price,
+                "currency": "USD",
+                "price_source": source,
+                "fba_offer_count": row.get("fba_offer_count"),
+                "new_offer_count": row.get("new_offer_count"),
+                "sales_rank": row.get("sales_rank"),
+                "last_update": (
+                    row["last_update"].isoformat()
+                    if row.get("last_update")
+                    else None
+                ),
+                "tr_price": (
+                    float(row["tr_price"]) if row.get("tr_price") else None
+                ),
+            }
+        )
+    missing = [a for a in asins if a not in seen]
+    return ToolResult(
+        data={
+            "items": items,
+            "found": len(items),
+            "missing": missing,
+        }
+    )
 
 
 @register_tool(

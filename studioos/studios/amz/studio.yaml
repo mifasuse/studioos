@@ -22,6 +22,7 @@ agents:
         - "B001JYN1IE"
         - "B015LJPJUU"
     tool_scope:
+      - pricefinder.db.lookup_asins
       - pricefinder.lookup_asin
       - memory.search
       - budget.check
