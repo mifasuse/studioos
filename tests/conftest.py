@@ -7,6 +7,11 @@ import pytest_asyncio
 
 from studioos.config import settings
 
+# Point the test suite at an isolated database so drop_all + create_all
+# never touches prod rows. Must happen before studioos.db is imported
+# below — get_engine reads settings.database_url on first call.
+settings.database_url = settings.test_database_url
+
 # Force the in-process bus backend for the test suite. The Redis backend is
 # smoke-verified via the M1/M2/M3 happy-path tests against a running Redis in
 # prod — see verify_prod.sh — but DLQ + reclaim semantics need deterministic

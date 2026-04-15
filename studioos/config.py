@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     database_url: str = (
         "postgresql+asyncpg://studioos:studioos@localhost:5433/studioos"
     )
+    # Separate database used by the pytest suite so `drop_all` + `create_all`
+    # never touches production state. conftest.py swaps settings.database_url
+    # to this value before any studioos module reads it.
+    test_database_url: str = (
+        "postgresql+asyncpg://studioos:studioos@localhost:5433/studioos_test"
+    )
 
     # LLM — MiniMax (default, single provider for now)
     minimax_api_key: str = ""
