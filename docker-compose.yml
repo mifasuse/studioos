@@ -46,6 +46,12 @@ services:
       STUDIOOS_BUYBOXPRICER_DB_URL: postgresql+asyncpg://studioos_ro:91f0778325ffed7c8320f866a7597fa07ebf80b8d4af2b9e@buyboxpricer-db:5432/buyboxpricer
     ports:
       - "8100:8000"
+    volumes:
+      # Read-only access to the supporting projects so the dev tools
+      # (git_status, git_log, docker compose ps) can work.
+      - /srv/projects:/srv/projects:ro
+      - /home/deployer/ebaycrosslister:/home/deployer/ebaycrosslister:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy

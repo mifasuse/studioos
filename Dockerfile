@@ -3,6 +3,8 @@ FROM python:3.12-slim
 # System deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    git \
+    docker.io \
     && rm -rf /var/lib/apt/lists/*
 
 # uv
