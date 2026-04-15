@@ -17,10 +17,8 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             set -e
-            REPO_DIR=/srv/projects/studioos
+            REPO_DIR=/home/deployer/studioos
             if [ ! -d "$REPO_DIR/.git" ]; then
-              sudo mkdir -p /srv/projects
-              sudo chown deployer:deployer /srv/projects
               git clone https://github.com/mifasuse/studioos.git "$REPO_DIR"
             fi
             cd "$REPO_DIR"

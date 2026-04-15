@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 
 import pytest_asyncio
 
-from studioos.db import SessionLocal, engine, session_scope
+from studioos.db import dispose_all, get_engine, session_scope
 from studioos.models import Base
 from studioos.studios import seed_all
 
@@ -17,6 +17,7 @@ from studioos.events import schemas_test  # noqa: F401
 @pytest_asyncio.fixture(scope="session")
 async def db_setup() -> AsyncIterator[None]:
     """Drop + recreate all tables and seed studios at session start."""
+    engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
@@ -26,7 +27,7 @@ async def db_setup() -> AsyncIterator[None]:
 
     yield
 
-    await engine.dispose()
+    await dispose_all()
 
 
 @pytest_asyncio.fixture

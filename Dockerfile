@@ -10,13 +10,13 @@ RUN pip install --no-cache-dir uv
 
 WORKDIR /app
 
-# Install dependencies first (cache layer)
+# Install dependencies first (cache layer) — include dev for tests
 COPY pyproject.toml README.md ./
-RUN uv sync --no-install-project
+RUN uv sync --no-install-project --extra dev
 
 # Application code
 COPY . .
-RUN uv sync
+RUN uv sync --extra dev
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
