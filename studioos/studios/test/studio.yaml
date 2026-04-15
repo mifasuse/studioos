@@ -1,0 +1,36 @@
+id: test
+display_name: "Test Studio"
+mission: "Vertical-slice test studio for Milestone 1 — verifies core loop end-to-end"
+status: active
+templates:
+  - id: scout_test
+    version: 1
+    display_name: "Test Scout"
+    description: "Generates mock opportunities on demand"
+    workflow_ref: scout_test
+  - id: analyst_test
+    version: 1
+    display_name: "Test Analyst"
+    description: "Evaluates opportunities and acknowledges"
+    workflow_ref: analyst_test
+agents:
+  - id: test-scout
+    template_id: scout_test
+    template_version: 1
+    display_name: "Test Scout"
+    mode: normal
+    heartbeat_config: {}
+    goals:
+      opportunities_per_run: 1
+  - id: test-analyst
+    template_id: analyst_test
+    template_version: 1
+    display_name: "Test Analyst"
+    mode: normal
+    heartbeat_config: {}
+    goals:
+      acceptance_rate_min: 0.3
+subscriptions:
+  - subscriber: test-analyst
+    event_pattern: "test.opportunity.detected"
+    priority: 30

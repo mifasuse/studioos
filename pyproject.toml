@@ -1,0 +1,74 @@
+[project]
+name = "studioos"
+version = "0.1.0"
+description = "Multi-studio autonomous agent platform — event-driven distributed OS for AI workers"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Nuri Topçugil", email = "ntopcugil@cyh.com.tr" },
+]
+requires-python = ">=3.12"
+dependencies = [
+    # Web + API
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    # DB
+    "sqlalchemy[asyncio]>=2.0.35",
+    "asyncpg>=0.30",
+    "alembic>=1.13",
+    # Orchestration
+    "langgraph>=0.2.50",
+    "langgraph-checkpoint-postgres>=2.0",
+    # HTTP + LLM
+    "httpx>=0.27",
+    # CLI
+    "typer>=0.13",
+    "rich>=13.9",
+    # Logging
+    "structlog>=24.4",
+    # YAML config
+    "pyyaml>=6.0",
+    # Utilities
+    "python-dateutil>=2.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "ipython>=8.29",
+]
+
+[project.scripts]
+studioos = "studioos.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["studioos"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "PTH", "RUF"]
+ignore = ["E501"]  # line too long (handled by formatter)
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true

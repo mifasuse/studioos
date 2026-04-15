@@ -1,0 +1,39 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: deployer
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            REPO_DIR=/srv/projects/studioos
+            if [ ! -d "$REPO_DIR/.git" ]; then
+              sudo mkdir -p /srv/projects
+              sudo chown deployer:deployer /srv/projects
+              git clone https://github.com/mifasuse/studioos.git "$REPO_DIR"
+            fi
+            cd "$REPO_DIR"
+            git pull origin main
+
+            # Ensure .env exists (first deploy); operator updates secrets manually
+            if [ ! -f .env ]; then
+              cp .env.example .env
+              echo "STUDIOOS_ENV=production" >> .env
+            fi
+
+            docker compose up -d --build postgres studioos
+            sleep 8
+            docker compose exec -T studioos uv run alembic upgrade head
+            docker compose exec -T studioos uv run studioos init
+            docker compose ps

@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: studioos-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: studioos
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-studioos}
+      POSTGRES_DB: studioos
+    ports:
+      - "5433:5432"
+    volumes:
+      - studioos-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studioos"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  studioos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: studioos
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      STUDIOOS_DATABASE_URL: postgresql+asyncpg://studioos:${POSTGRES_PASSWORD:-studioos}@postgres:5432/studioos
+    ports:
+      - "8100:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - default
+
+volumes:
+  studioos-pgdata:
+    driver: local
+
+networks:
+  default:
+    name: studioos-net
