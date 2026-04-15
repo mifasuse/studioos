@@ -38,6 +38,31 @@ templates:
     display_name: "AMZ Repricer"
     description: "Approval-gated executor for reprice recommendations; calls BuyBoxPricer's run-single engine when granted (dry-run by default)"
     workflow_ref: amz_repricer
+  - id: amz_ceo
+    version: 1
+    display_name: "AMZ CEO"
+    description: "Weekly meta orchestrator — reads the last 7 days of activity + active playbook and posts a strategic brief to Slack and Telegram"
+    workflow_ref: amz_ceo
+  - id: amz_qa
+    version: 1
+    display_name: "AMZ QA"
+    description: "Hourly health smoke test against pricefinder/buyboxpricer/adsoptimizer/ebaycrosslister; reports PASS/FAIL"
+    workflow_ref: amz_qa
+  - id: amz_crosslister
+    version: 1
+    display_name: "AMZ CrossLister"
+    description: "Surfaces ASINs where eBay sells meaningfully above Amazon buybox; notify-only"
+    workflow_ref: amz_crosslister
+  - id: amz_admanager
+    version: 1
+    display_name: "AMZ AdManager"
+    description: "Surfaces high-traffic well-rated ASINs worth running PPC ads on; notify-only"
+    workflow_ref: amz_admanager
+  - id: amz_dev
+    version: 1
+    display_name: "AMZ Dev"
+    description: "Hourly engineering pulse — failed runs, deploy state, system health summary"
+    workflow_ref: amz_dev
 agents:
   - id: amz-monitor
     template_id: amz_monitor
@@ -142,6 +167,80 @@ agents:
     tool_scope:
       - buyboxpricer.api.run_single_repricing
       - telegram.notify
+      - memory.search
+  - id: amz-ceo
+    template_id: amz_ceo
+    template_version: 1
+    display_name: "AMZ CEO"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "@every 168h"
+    goals:
+      llm_provider: minimax
+    tool_scope:
+      - llm.chat
+      - telegram.notify
+      - slack.notify
+      - memory.search
+      - kpi.read
+  - id: amz-qa
+    template_id: amz_qa
+    template_version: 1
+    display_name: "AMZ QA"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "@every 1h"
+    goals: {}
+    tool_scope:
+      - http.get_json
+      - telegram.notify
+      - slack.notify
+      - memory.search
+  - id: amz-crosslister
+    template_id: amz_crosslister
+    template_version: 1
+    display_name: "AMZ CrossLister"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "@every 6h"
+    goals:
+      scan_limit: 15
+      min_premium: 1.15
+      min_monthly_sold: 30
+    tool_scope:
+      - pricefinder.db.crosslist_candidates
+      - telegram.notify
+      - slack.notify
+      - memory.search
+  - id: amz-admanager
+    template_id: amz_admanager
+    template_version: 1
+    display_name: "AMZ AdManager"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "@every 6h"
+    goals:
+      scan_limit: 15
+      min_monthly_sold: 50
+      min_reviews: 50
+      min_rating: 4.0
+      max_competitors: 15
+    tool_scope:
+      - pricefinder.db.ad_candidates
+      - telegram.notify
+      - slack.notify
+      - memory.search
+  - id: amz-dev
+    template_id: amz_dev
+    template_version: 1
+    display_name: "AMZ Dev"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "@every 1h"
+    goals: {}
+    tool_scope:
+      - telegram.notify
+      - slack.notify
       - memory.search
 subscriptions:
   - subscriber: amz-analyst

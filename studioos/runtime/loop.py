@@ -23,6 +23,17 @@ async def run_forever() -> None:
     configure_logging()
     log.info("runtime.starting", env=settings.env)
 
+    # Register any MCP HTTP servers configured in the environment.
+    # Failure here must not block startup.
+    try:
+        from studioos.tools.mcp_http import register_mcp_http_servers
+
+        n = await register_mcp_http_servers()
+        if n:
+            log.info("runtime.mcp_tools_registered", count=n)
+    except Exception:
+        log.exception("runtime.mcp_register_failed")
+
     stop_event = asyncio.Event()
 
     def _handle_signal(sig: signal.Signals) -> None:

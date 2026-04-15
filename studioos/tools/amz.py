@@ -560,6 +560,163 @@ async def pricefinder_db_scout_candidates(
     )
 
 
+_CROSSLIST_SQL = text(
+    """
+    SELECT
+        p.asin,
+        p.title,
+        p.brand,
+        u.buybox_price,
+        u.ebay_new_price,
+        u.monthly_sold,
+        u.fba_offer_count,
+        u.sales_rank,
+        u.last_update
+    FROM products p
+    JOIN us_market_data u ON u.product_id = p.id
+    WHERE p.is_active = true
+      AND u.buybox_price IS NOT NULL
+      AND u.ebay_new_price IS NOT NULL
+      AND u.ebay_new_price > u.buybox_price * :min_premium
+      AND COALESCE(u.monthly_sold, 0) >= :min_monthly_sold
+      AND COALESCE(u.fba_offer_count, 0) >= 1
+    ORDER BY (u.ebay_new_price - u.buybox_price) DESC
+    LIMIT :lim
+    """
+)
+
+
+@register_tool(
+    "pricefinder.db.crosslist_candidates",
+    description=(
+        "Find listings where eBay's new-price is meaningfully above the "
+        "Amazon buy-box (eBay arbitrage candidates). Read-only."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer"},
+            "min_premium": {"type": "number"},
+            "min_monthly_sold": {"type": "integer"},
+        },
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="amz",
+    cost_cents=0,
+)
+async def pricefinder_db_crosslist_candidates(
+    args: dict[str, Any], ctx: ToolContext
+) -> ToolResult:
+    params = {
+        "lim": int(args.get("limit", 15)),
+        "min_premium": float(args.get("min_premium", 1.15)),
+        "min_monthly_sold": int(args.get("min_monthly_sold", 30)),
+    }
+    engine = _pf_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(_CROSSLIST_SQL, params)
+        rows = [dict(r) for r in result.mappings()]
+
+    items = []
+    for r in rows:
+        bb = float(r["buybox_price"])
+        eb = float(r["ebay_new_price"])
+        items.append(
+            {
+                "asin": r["asin"],
+                "title": (r.get("title") or "")[:120],
+                "brand": r.get("brand"),
+                "amazon_buybox_usd": bb,
+                "ebay_new_usd": eb,
+                "premium_pct": round(((eb - bb) / bb) * 100, 2),
+                "monthly_sold": r.get("monthly_sold"),
+                "fba_offer_count": r.get("fba_offer_count"),
+                "sales_rank": r.get("sales_rank"),
+            }
+        )
+    return ToolResult(data={"items": items, "count": len(items)})
+
+
+_AD_SQL = text(
+    """
+    SELECT
+        p.asin,
+        p.title,
+        p.brand,
+        u.buybox_price,
+        u.monthly_sold,
+        u.review_count,
+        u.rating,
+        u.fba_offer_count,
+        u.sales_rank
+    FROM products p
+    JOIN us_market_data u ON u.product_id = p.id
+    WHERE p.is_active = true
+      AND u.buybox_price IS NOT NULL
+      AND COALESCE(u.monthly_sold, 0) >= :min_monthly_sold
+      AND COALESCE(u.review_count, 0) >= :min_reviews
+      AND COALESCE(u.rating, 0) >= :min_rating
+      AND COALESCE(u.fba_offer_count, 999) <= :max_competitors
+    ORDER BY u.monthly_sold DESC NULLS LAST
+    LIMIT :lim
+    """
+)
+
+
+@register_tool(
+    "pricefinder.db.ad_candidates",
+    description=(
+        "Find listings worth running PPC ads on: high monthly_sold, "
+        "decent review count + rating, manageable competition."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer"},
+            "min_monthly_sold": {"type": "integer"},
+            "min_reviews": {"type": "integer"},
+            "min_rating": {"type": "number"},
+            "max_competitors": {"type": "integer"},
+        },
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="amz",
+    cost_cents=0,
+)
+async def pricefinder_db_ad_candidates(
+    args: dict[str, Any], ctx: ToolContext
+) -> ToolResult:
+    params = {
+        "lim": int(args.get("limit", 15)),
+        "min_monthly_sold": int(args.get("min_monthly_sold", 50)),
+        "min_reviews": int(args.get("min_reviews", 50)),
+        "min_rating": float(args.get("min_rating", 4.0)),
+        "max_competitors": int(args.get("max_competitors", 15)),
+    }
+    engine = _pf_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(_AD_SQL, params)
+        rows = [dict(r) for r in result.mappings()]
+
+    items = [
+        {
+            "asin": r["asin"],
+            "title": (r.get("title") or "")[:120],
+            "brand": r.get("brand"),
+            "buybox_usd": float(r["buybox_price"]) if r.get("buybox_price") else None,
+            "monthly_sold": r.get("monthly_sold"),
+            "review_count": r.get("review_count"),
+            "rating": float(r["rating"]) if r.get("rating") else None,
+            "fba_offer_count": r.get("fba_offer_count"),
+            "sales_rank": r.get("sales_rank"),
+        }
+        for r in rows
+    ]
+    return ToolResult(data={"items": items, "count": len(items)})
+
+
 @register_tool(
     "pricefinder.lookup_asin",
     description=(

@@ -5,10 +5,15 @@ Importing this module registers all workflows with the runtime workflow registry
 from __future__ import annotations
 
 from studioos.workflows import (  # noqa: F401
+    amz_admanager,
     amz_analyst,
+    amz_ceo,
+    amz_crosslister,
+    amz_dev,
     amz_executor,
     amz_monitor,
     amz_pricer,
+    amz_qa,
     amz_reflector,
     amz_repricer,
     amz_scout,
@@ -28,6 +33,11 @@ __all__ = [
     "amz_pricer",
     "amz_reflector",
     "amz_repricer",
+    "amz_ceo",
+    "amz_qa",
+    "amz_crosslister",
+    "amz_admanager",
+    "amz_dev",
     "app_studio_pulse",
     "app_studio_reflector",
 ]

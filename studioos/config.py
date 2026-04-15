@@ -95,5 +95,14 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_default_chat_id: str = ""
 
+    # Slack notify (M20)
+    slack_bot_token: str = ""
+    slack_default_channel: str = ""
+
+    # MCP HTTP tool servers (M21)
+    # Format: comma-separated "prefix=url" entries, e.g.
+    #   playwright=https://pw.example/mcp,gh=https://gh.example/mcp
+    mcp_http_servers: str = ""
+
 
 settings = Settings()
