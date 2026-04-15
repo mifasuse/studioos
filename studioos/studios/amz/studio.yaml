@@ -8,6 +8,11 @@ templates:
     display_name: "AMZ Price Monitor"
     description: "Polls PriceFinder for a watchlist of ASINs and records price observations + anomalies"
     workflow_ref: amz_monitor
+  - id: amz_analyst
+    version: 1
+    display_name: "AMZ Analyst"
+    description: "LLM-backed classifier for price anomalies — confirms opportunities or rejects noise"
+    workflow_ref: amz_analyst
 agents:
   - id: amz-monitor
     template_id: amz_monitor
@@ -26,4 +31,21 @@ agents:
       - pricefinder.lookup_asin
       - memory.search
       - budget.check
-subscriptions: []
+  - id: amz-analyst
+    template_id: amz_analyst
+    template_version: 1
+    display_name: "AMZ Analyst"
+    mode: normal
+    heartbeat_config: {}
+    goals:
+      accept_confidence_min: 0.6
+    tool_scope:
+      - llm.chat
+      - pricefinder.db.lookup_asins
+      - memory.search
+      - kpi.read
+      - budget.check
+subscriptions:
+  - subscriber: amz-analyst
+    event_pattern: "amz.price.anomaly_detected"
+    priority: 30

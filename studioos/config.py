@@ -24,10 +24,14 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://studioos:studioos@localhost:5433/studioos"
     )
 
-    # LLM — MiniMax (default)
+    # LLM — MiniMax (default, single provider for now)
     minimax_api_key: str = ""
     minimax_base_url: str = "https://api.minimax.io/v1"
     minimax_model: str = "MiniMax-M2.7-highspeed"
+    # Rough per-1k-token cost in integer cents — conservative defaults,
+    # override in .env when real contract is confirmed.
+    minimax_cost_input_per_1k_cents: float = 1.0
+    minimax_cost_output_per_1k_cents: float = 4.0
 
     # LLM — Anthropic (strategic)
     anthropic_api_key: str = ""

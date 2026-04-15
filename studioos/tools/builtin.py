@@ -15,6 +15,7 @@ from studioos.kpi.store import get_current_state
 from studioos.memory.store import search_memory
 
 from . import amz as _amz  # noqa: F401  (registers AMZ tools)
+from . import llm as _llm  # noqa: F401  (registers llm.chat)
 from .base import ToolContext, ToolError, ToolResult
 from .registry import register_tool
 
