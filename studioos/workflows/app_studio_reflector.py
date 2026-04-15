@@ -1,18 +1,12 @@
-"""amz_reflector workflow — Milestone 13: daily reflection / learning loop.
+"""app_studio_reflector — daily reflection scoped to studio_id=app-studio.
 
-Once a day, scan the last 24 hours of agent_runs, events, verdicts,
-tool_calls; build a structured digest; ask MiniMax to interpret it
-(what worked, what failed, what to change tomorrow); persist the
-reflection as a `memory_episodic` row; and send a morning summary
-to Telegram.
-
-This is the first agent that consumes its own organization's history
-rather than external Amazon data.
+Mirrors amz_reflector but every aggregation is filtered by studio_id.
+Uses the same playbook procedural memory, just with id='app_studio_playbook'.
 """
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -33,6 +27,54 @@ from studioos.tools import invoke_from_state
 log = get_logger(__name__)
 
 
+_PLAYBOOK_ID = "app_studio_playbook"
+_STUDIO_ID = "app-studio"
+
+
+SYSTEM_PROMPT = """You are the daily reflection agent for an autonomous
+mobile App Studio. You receive a structured digest of the last 24 hours
+of activity scoped to the App Studio (which agents ran, what events
+fired, what changed) plus — when available — the previous day's
+reflection.
+
+The studio is in early bootstrap: at this stage there will often be
+nothing meaningful to report. That's fine; say so honestly rather
+than inventing activity.
+
+Your reflection has 5 sections, each ≤ 4 bullet points:
+
+  Çalıştı  — what went well
+  Dikkat   — anomalies, signals to watch
+  Düzelt   — concrete changes for tomorrow
+  İlerleme — for each "Düzelt" from the previous reflection: ✓ done /
+             ✗ open / ~ partial
+  Sayılar  — 1-2 metrics worth highlighting (or "henüz veri yok")
+
+Style: terse, factual, Turkish, plain Markdown.
+"""
+
+
+PLAYBOOK_PROMPT = """You are the playbook curator for the App Studio.
+You have just received today's reflection AND the current playbook.
+Update the playbook — a small set of stable operating rules.
+
+Rules:
+- ≤ 12 entries total. Replace conflicting old rules.
+- Drop entries that haven't paid off in 5 reflections.
+- Specific over generic; reference exact thresholds when possible.
+
+Reply in plain Markdown:
+
+# App Studio Playbook v{next_version}
+## Filtreler
+- ...
+## Kararlar
+- ...
+## Operasyon
+- ...
+"""
+
+
 class ReflectorState(TypedDict, total=False):
     agent_id: str
     studio_id: str
@@ -42,7 +84,6 @@ class ReflectorState(TypedDict, total=False):
     trigger_type: str
     input: dict[str, Any]
     goals: dict[str, Any]
-    # populated during run
     digest: dict[str, Any]
     previous_reflection: str | None
     current_playbook: str | None
@@ -55,77 +96,27 @@ class ReflectorState(TypedDict, total=False):
     summary: str
 
 
-SYSTEM_PROMPT = """You are the daily reflection agent for an autonomous
-Amazon TR→US arbitrage studio. You receive a structured digest of the
-last 24 hours of activity (which agents ran, what they decided, what
-events fired, how much was spent on tools/LLM, what failed) plus —
-when available — the previous day's reflection.
-
-Your reflection has 5 sections, each ≤ 4 bullet points:
-
-  Çalıştı  — what went well
-  Dikkat   — anomalies, signals to watch, near-misses
-  Düzelt   — concrete changes for tomorrow (cron cadence, threshold,
-             prompt tweak, missing data)
-  İlerleme — for each "Düzelt" from the previous reflection: did it
-             actually get fixed? mark ✓ done / ✗ open / ~ partial
-  Sayılar  — 1-2 metrics worth highlighting
-
-Style: terse, factual, concrete. No hype, no filler. Reply in plain
-Markdown — no code fences, no JSON, no preamble.
-"""
-
-
-PLAYBOOK_PROMPT = """You are the playbook curator for the AMZ studio.
-You have just received today's reflection AND the current playbook
-(if any). Your job is to update the playbook — a small set of stable
-operating rules the agents should follow tomorrow.
-
-Rules:
-- A playbook entry is a single concrete rule (ex: "Reject discoveries
-  with sales_rank=null AND review_count<10 — too risky for B2B niche").
-- Keep the playbook ≤ 12 rules total. If a new rule conflicts with an
-  old one, replace.
-- Drop rules that haven't paid off in 5 reflections.
-- Prefer specific over generic; reference exact thresholds.
-
-Reply in plain Markdown:
-
-# AMZ Playbook v{next_version}
-## Filtreler
-- ...
-## Kararlar
-- ...
-## Operasyon
-- ...
-
-No preamble.
-"""
-
-
 async def _build_digest(window_hours: int = 24) -> dict[str, Any]:
-    """Aggregate the last N hours of platform activity."""
     since = datetime.now(UTC) - timedelta(hours=window_hours)
     async with session_scope() as session:
-        # Run state histogram by agent
         run_rows = (
             await session.execute(
                 select(AgentRun.agent_id, AgentRun.state, func.count())
+                .where(AgentRun.studio_id == _STUDIO_ID)
                 .where(AgentRun.created_at >= since)
                 .group_by(AgentRun.agent_id, AgentRun.state)
             )
         ).all()
-
-        # Event type histogram
         event_rows = (
             await session.execute(
                 select(Event.event_type, func.count())
+                .where(Event.studio_id == _STUDIO_ID)
                 .where(Event.recorded_at >= since)
                 .group_by(Event.event_type)
             )
         ).all()
-
-        # Tool usage + cost
+        # Tool calls don't carry studio_id directly; aggregate by agent
+        # whose studio is app-studio.
         tool_rows = (
             await session.execute(
                 select(
@@ -133,52 +124,12 @@ async def _build_digest(window_hours: int = 24) -> dict[str, Any]:
                     func.count(),
                     func.coalesce(func.sum(ToolCall.cost_cents), 0),
                 )
+                .join(AgentRun, AgentRun.id == ToolCall.run_id)
+                .where(AgentRun.studio_id == _STUDIO_ID)
                 .where(ToolCall.called_at >= since)
                 .group_by(ToolCall.tool_name)
             )
         ).all()
-
-        # Failed runs (errors)
-        fail_rows = (
-            (
-                await session.execute(
-                    select(AgentRun.agent_id, AgentRun.error)
-                    .where(AgentRun.created_at >= since)
-                    .where(
-                        AgentRun.state.in_(
-                            ("failed", "timed_out", "dead", "budget_exceeded")
-                        )
-                    )
-                    .order_by(desc(AgentRun.created_at))
-                    .limit(10)
-                )
-            ).all()
-        )
-
-        # Recent confirmed/rejected opportunities
-        verdict_rows = (
-            (
-                await session.execute(
-                    select(Event)
-                    .where(
-                        Event.event_type.in_(
-                            (
-                                "amz.opportunity.confirmed",
-                                "amz.opportunity.rejected",
-                                "amz.opportunity.discovered",
-                                "amz.reprice.recommended",
-                                "amz.price.anomaly_detected",
-                            )
-                        )
-                    )
-                    .where(Event.recorded_at >= since)
-                    .order_by(desc(Event.recorded_at))
-                    .limit(20)
-                )
-            )
-            .scalars()
-            .all()
-        )
 
     runs_by_agent: dict[str, dict[str, int]] = {}
     for agent_id, state, count in run_rows:
@@ -186,6 +137,7 @@ async def _build_digest(window_hours: int = 24) -> dict[str, Any]:
 
     return {
         "window_hours": window_hours,
+        "studio_id": _STUDIO_ID,
         "runs_by_agent": runs_by_agent,
         "events_by_type": {t: int(c) for t, c in event_rows},
         "tools": {
@@ -193,34 +145,10 @@ async def _build_digest(window_hours: int = 24) -> dict[str, Any]:
             for name, c, cost in tool_rows
         },
         "total_tool_cost_cents": sum(int(cost) for _, _, cost in tool_rows),
-        "failures": [
-            {
-                "agent_id": aid,
-                "type": (err or {}).get("type"),
-                "message": (err or {}).get("message", "")[:200],
-            }
-            for aid, err in fail_rows
-        ],
-        "verdicts": [
-            {
-                "type": e.event_type,
-                "asin": e.payload.get("asin"),
-                "verdict": e.payload.get("verdict"),
-                "confidence": e.payload.get("confidence"),
-                "rationale": (e.payload.get("rationale") or "")[:160],
-                "estimated_profit_usd": e.payload.get("estimated_profit_usd"),
-                "roi_pct": e.payload.get("roi_pct"),
-            }
-            for e in verdict_rows
-        ],
     }
 
 
-_PLAYBOOK_ID = "amz_playbook"
-
-
 async def _load_previous_reflection(agent_id: str) -> str | None:
-    """Fetch yesterday's reflection summary for self-reading."""
     yesterday = (datetime.now(UTC) - timedelta(days=1)).date()
     async with session_scope() as session:
         row = (
@@ -236,7 +164,6 @@ async def _load_previous_reflection(agent_id: str) -> str | None:
 
 
 async def _load_active_playbook() -> tuple[str | None, int]:
-    """Return (content, version) of the currently active playbook, or (None, 0)."""
     async with session_scope() as session:
         row = (
             await session.execute(
@@ -273,10 +200,7 @@ async def node_reflect(state: ReflectorState) -> dict[str, Any]:
 
     sections: list[str] = []
     if prev:
-        sections.append(
-            "## Önceki gün reflection (önceki Düzelt'leri buradan oku):\n"
-            + prev[:3000]
-        )
+        sections.append("## Önceki gün reflection:\n" + prev[:3000])
     if playbook:
         sections.append("## Mevcut playbook:\n" + playbook[:2000])
     sections.append(
@@ -284,9 +208,7 @@ async def node_reflect(state: ReflectorState) -> dict[str, Any]:
         + json.dumps(digest, ensure_ascii=False, indent=2)[:5000]
         + "\n```"
     )
-
     user = "\n\n".join(sections)
-
     result = await invoke_from_state(
         state,
         "llm.chat",
@@ -295,31 +217,26 @@ async def node_reflect(state: ReflectorState) -> dict[str, Any]:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user},
             ],
-            "max_tokens": 2000,
+            "max_tokens": 1500,
             "temperature": 0.2,
         },
     )
     if result["status"] != "ok":
         log.warning(
-            "amz_reflector.llm_failed",
-            status=result["status"],
-            error=result.get("error"),
+            "app_studio_reflector.llm_failed", error=result.get("error")
         )
         return {"reflection": "_LLM çağrısı başarısız_"}
-    content = (result["data"] or {}).get("content", "")
-    return {"reflection": content.strip()}
+    return {"reflection": (result["data"] or {}).get("content", "").strip()}
 
 
 async def node_update_playbook(state: ReflectorState) -> dict[str, Any]:
-    """Ask the LLM to evolve the playbook from today's reflection."""
     reflection = state.get("reflection") or ""
     current = state.get("current_playbook") or "(empty)"
     next_version = int(state.get("current_playbook_version", 0)) + 1
-
     user = (
         f"## Bugünkü reflection\n{reflection[:3000]}\n\n"
         f"## Mevcut playbook\n{current[:3000]}\n\n"
-        f"Yeni sürüm v{next_version} olacak."
+        f"Yeni sürüm v{next_version}."
     )
     result = await invoke_from_state(
         state,
@@ -337,10 +254,6 @@ async def node_update_playbook(state: ReflectorState) -> dict[str, Any]:
         },
     )
     if result["status"] != "ok":
-        log.warning(
-            "amz_reflector.playbook_failed",
-            error=result.get("error"),
-        )
         return {"new_playbook": None}
     return {"new_playbook": (result["data"] or {}).get("content", "").strip()}
 
@@ -352,7 +265,6 @@ async def node_persist(state: ReflectorState) -> dict[str, Any]:
     next_version = int(state.get("current_playbook_version", 0)) + 1
     today = datetime.now(UTC).date()
 
-    # Persist as an episodic memory row (one per day per agent).
     async with session_scope() as session:
         existing = (
             await session.execute(
@@ -378,9 +290,6 @@ async def node_persist(state: ReflectorState) -> dict[str, Any]:
                     ),
                 )
             )
-
-        # Persist the new playbook version (if the LLM returned one)
-        # and deactivate any older active rows.
         if new_playbook:
             await session.execute(
                 MemoryProcedural.__table__.update()
@@ -395,7 +304,7 @@ async def node_persist(state: ReflectorState) -> dict[str, Any]:
                     version=next_version,
                     content=new_playbook[:8000],
                     author=state["agent_id"],
-                    change_summary=f"Auto-evolved by reflector on {today.isoformat()}",
+                    change_summary=f"App Studio reflector evolved on {today.isoformat()}",
                     active=True,
                 )
             )
@@ -403,14 +312,12 @@ async def node_persist(state: ReflectorState) -> dict[str, Any]:
     playbook_msg = ""
     if new_playbook:
         playbook_msg = (
-            f"\n\n*📋 Playbook v{next_version} (auto-evolved):*\n"
+            f"\n\n*📋 App Studio Playbook v{next_version}:*\n"
             + new_playbook[:1500]
         )
-
     notify_text = (
-        f"*🌅 StudioOS Daily Reflection — {today.isoformat()}*\n\n"
-        f"{reflection[:2500]}"
-        f"{playbook_msg}"
+        f"*🌅 App Studio Daily Reflection — {today.isoformat()}*\n\n"
+        f"{reflection[:2500]}{playbook_msg}"
     )
     notify = await invoke_from_state(
         state,
@@ -424,19 +331,14 @@ async def node_persist(state: ReflectorState) -> dict[str, Any]:
     notified = notify["status"] == "ok"
 
     state_accum = dict(state.get("state") or {})
-    state_accum["reflections_total"] = (
-        int(state_accum.get("reflections_total", 0)) + 1
-    )
+    state_accum["reflections_total"] = int(state_accum.get("reflections_total", 0)) + 1
     state_accum["last_reflection_date"] = today.isoformat()
 
     return {
         "memories": [
             {
-                "content": (
-                    f"Daily reflection {today.isoformat()}: "
-                    + reflection[:300]
-                ),
-                "tags": ["reflection", "daily", today.isoformat()],
+                "content": f"App Studio reflection {today.isoformat()}: {reflection[:300]}",
+                "tags": ["reflection", "daily", "app-studio", today.isoformat()],
                 "importance": 0.7,
             }
         ],
@@ -448,8 +350,7 @@ async def node_persist(state: ReflectorState) -> dict[str, Any]:
         ],
         "state": state_accum,
         "summary": (
-            f"Reflected on {sum(digest.get('events_by_type', {}).values())} "
-            f"events, {sum(sum(v.values()) for v in digest.get('runs_by_agent', {}).values())} runs"
+            f"Reflected on {sum(digest.get('events_by_type', {}).values())} events"
             + (" (notified)" if notified else "")
         ),
     }
@@ -471,4 +372,4 @@ def build_graph() -> Any:
 
 compiled = build_graph()
 
-register_workflow("amz_reflector", 1, compiled)
+register_workflow("app_studio_reflector", 1, compiled)

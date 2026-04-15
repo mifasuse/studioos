@@ -16,11 +16,17 @@ def context_from_state(state: dict[str, Any]) -> ToolContext:
             return val
         return UUID(str(val))
 
+    extra: dict[str, Any] = {}
+    goals = state.get("goals") or {}
+    if goals.get("llm_provider"):
+        extra["llm_provider"] = goals["llm_provider"]
+
     return ToolContext(
         agent_id=state.get("agent_id"),
         run_id=_uuid(state.get("run_id")),
         correlation_id=_uuid(state.get("correlation_id")),
         studio_id=state.get("studio_id"),
+        extra=extra,
     )
 
 

@@ -1,0 +1,43 @@
+id: app-studio
+display_name: "App Studio"
+mission: "Mobile app portfolio: monitor metrics across the published apps, surface anomalies, and (in future phases) drive pricing/marketing experiments via approval gates."
+status: active
+templates:
+  - id: app_studio_pulse
+    version: 1
+    display_name: "App Studio Pulse"
+    description: "Daily heartbeat — sends a Telegram digest of currently-tracked apps and any KPI-bearing observations from the platform"
+    workflow_ref: app_studio_pulse
+  - id: app_studio_reflector
+    version: 1
+    display_name: "App Studio Reflector"
+    description: "Daily reflection scoped to studio_id=app-studio. Reuses the AMZ reflector pattern via a shared base."
+    workflow_ref: app_studio_reflector
+agents:
+  - id: app-studio-pulse
+    template_id: app_studio_pulse
+    template_version: 1
+    display_name: "App Studio Pulse"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "@every 24h"
+    goals:
+      tracked_apps: []
+    tool_scope:
+      - telegram.notify
+      - memory.search
+  - id: app-studio-reflector
+    template_id: app_studio_reflector
+    template_version: 1
+    display_name: "App Studio Reflector"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "@every 24h"
+    goals:
+      window_hours: 24
+      llm_provider: minimax
+    tool_scope:
+      - llm.chat
+      - telegram.notify
+      - memory.search
+subscriptions: []

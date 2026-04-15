@@ -30,14 +30,27 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://studioos:studioos@localhost:5433/studioos_test"
     )
 
-    # LLM — MiniMax (default, single provider for now)
+    # LLM — default provider
+    llm_default_provider: str = "minimax"  # minimax | anthropic | openai
+
+    # LLM — MiniMax
     minimax_api_key: str = ""
     minimax_base_url: str = "https://api.minimax.io/v1"
     minimax_model: str = "MiniMax-M2.7-highspeed"
-    # Rough per-1k-token cost in integer cents — conservative defaults,
-    # override in .env when real contract is confirmed.
     minimax_cost_input_per_1k_cents: float = 1.0
     minimax_cost_output_per_1k_cents: float = 4.0
+
+    # LLM — Anthropic (Claude)
+    anthropic_base_url: str = "https://api.anthropic.com/v1"
+    anthropic_model: str = "claude-haiku-4-5-20251001"
+    anthropic_cost_input_per_1k_cents: float = 0.1   # haiku 4.5 input
+    anthropic_cost_output_per_1k_cents: float = 0.4  # haiku 4.5 output
+
+    # LLM — OpenAI
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_model: str = "gpt-4.1-mini"
+    openai_cost_input_per_1k_cents: float = 0.04
+    openai_cost_output_per_1k_cents: float = 0.16
 
     # LLM — Anthropic (strategic)
     anthropic_api_key: str = ""
