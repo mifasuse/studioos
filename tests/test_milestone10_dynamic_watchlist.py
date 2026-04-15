@@ -152,7 +152,7 @@ async def test_trigger_watchlist_override_beats_strategy(db_session) -> None:
 
     with (
         _Patch("pricefinder.db.top_opportunities", _explode),
-        _Patch("pricefinder.db.lookup_asins", _lookup_handler({"B02OVERRIDE": 50.0})),
+        _Patch("pricefinder.db.lookup_asins", _lookup_handler({"B02OVERRID": 50.0})),
     ):
         async with session_scope() as session:
             await create_pending_run(
@@ -160,7 +160,7 @@ async def test_trigger_watchlist_override_beats_strategy(db_session) -> None:
                 agent_id="amz-monitor",
                 trigger_type="manual",
                 trigger_ref="m10-override",
-                input_snapshot={"watchlist": ["B02OVERRIDE"]},
+                input_snapshot={"watchlist": ["B02OVERRID"]},
             )
         await _drain()
 
@@ -175,7 +175,7 @@ async def test_trigger_watchlist_override_beats_strategy(db_session) -> None:
             .all()
         )
     assert len(events) == 1
-    assert events[0].payload["asin"] == "B02OVERRIDE"
+    assert events[0].payload["asin"] == "B02OVERRID"
 
 
 @pytest.mark.asyncio
