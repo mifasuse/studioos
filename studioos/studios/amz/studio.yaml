@@ -38,6 +38,11 @@ templates:
     display_name: "AMZ Repricer"
     description: "Approval-gated executor for reprice recommendations; calls BuyBoxPricer's run-single engine when granted (dry-run by default)"
     workflow_ref: amz_repricer
+  - id: studio_pruner
+    version: 1
+    display_name: "Memory Pruner"
+    description: "Weekly memory garbage collection — drops low-importance, old, unused semantic memories"
+    workflow_ref: studio_pruner
   - id: amz_ceo
     version: 1
     display_name: "AMZ CEO"
@@ -138,9 +143,13 @@ agents:
     schedule_cron: "@every 30m"
     goals:
       scan_limit: 25
+      aging_limit: 25
+      min_age_days: 90
       underbid_pct: 1.0
     tool_scope:
       - buyboxpricer.db.lost_buybox
+      - buyboxpricer.db.aging_inventory
+      - buyboxpricer.db.backfill_acquisition_cost
       - telegram.notify
       - memory.search
   - id: amz-reflector
@@ -174,7 +183,7 @@ agents:
     display_name: "AMZ CEO"
     mode: normal
     heartbeat_config: {}
-    schedule_cron: "@every 168h"
+    schedule_cron: "0 9 * * 1"
     goals:
       llm_provider: minimax
     tool_scope:
@@ -229,6 +238,21 @@ agents:
       - pricefinder.db.ad_candidates
       - telegram.notify
       - slack.notify
+      - memory.search
+  - id: amz-pruner
+    template_id: studio_pruner
+    template_version: 1
+    display_name: "AMZ Memory Pruner"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "0 4 * * 0"
+    goals:
+      min_age_days: 30
+      min_unused_days: 14
+      importance_threshold: 0.3
+      dry_run: false
+    tool_scope:
+      - telegram.notify
       - memory.search
   - id: amz-dev
     template_id: amz_dev

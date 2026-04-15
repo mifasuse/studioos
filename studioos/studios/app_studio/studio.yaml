@@ -13,6 +13,11 @@ templates:
     display_name: "App Studio Reflector"
     description: "Daily reflection scoped to studio_id=app-studio. Reuses the AMZ reflector pattern via a shared base."
     workflow_ref: app_studio_reflector
+  - id: studio_pruner
+    version: 1
+    display_name: "Memory Pruner"
+    description: "Weekly memory garbage collection"
+    workflow_ref: studio_pruner
 agents:
   - id: app-studio-pulse
     template_id: app_studio_pulse
@@ -38,6 +43,21 @@ agents:
       llm_provider: minimax
     tool_scope:
       - llm.chat
+      - telegram.notify
+      - memory.search
+  - id: app-studio-pruner
+    template_id: studio_pruner
+    template_version: 1
+    display_name: "App Studio Memory Pruner"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "0 4 * * 0"
+    goals:
+      min_age_days: 30
+      min_unused_days: 14
+      importance_threshold: 0.3
+      dry_run: false
+    tool_scope:
       - telegram.notify
       - memory.search
 subscriptions: []

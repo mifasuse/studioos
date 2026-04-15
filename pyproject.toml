@@ -21,6 +21,8 @@ dependencies = [
     "pgvector>=0.3",
     # Event bus
     "redis>=5.0",
+    # Cron parsing
+    "croniter>=2.0",
     # Orchestration
     "langgraph>=0.2.50",
     "langgraph-checkpoint-postgres>=2.0",

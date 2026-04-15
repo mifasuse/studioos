@@ -614,18 +614,18 @@ def schedule_cmd() -> None:
         now = datetime.now(UTC)
         for r in rows:
             try:
-                cadence = parse_schedule(r.schedule_cron or "")
-                cadence_str = str(cadence)
+                schedule = parse_schedule(r.schedule_cron or "")
+                cadence_str = schedule.display_cadence()
             except ScheduleError as exc:
-                cadence = None
+                schedule = None
                 cadence_str = f"[red]{exc}[/red]"
             last = (
                 r.last_scheduled_at.strftime("%H:%M:%S")
                 if r.last_scheduled_at
                 else "-"
             )
-            if r.last_scheduled_at is not None and cadence is not None:
-                next_due = r.last_scheduled_at + cadence
+            if r.last_scheduled_at is not None and schedule is not None:
+                next_due = schedule.next_fire_after(r.last_scheduled_at)
                 if next_due <= now:
                     next_str = "[green]now[/green]"
                 else:

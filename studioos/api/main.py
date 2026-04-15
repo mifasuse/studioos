@@ -65,6 +65,89 @@ async def health() -> dict[str, Any]:
     return {"status": "ok", "version": __version__}
 
 
+@app.post("/events/ingest")
+async def ingest_event(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Generic event-ingest webhook for external systems (CI, etc).
+
+    Body shape:
+        {
+          "event_type": "amz.deploy.notification",
+          "event_version": 1,
+          "studio_id": "amz",
+          "payload": {...},
+          "source": "github-actions",
+          "correlation_id": "<uuid optional>"
+        }
+
+    The event lands in the outbox and the publisher routes it to any
+    matching subscriptions. No auth on this endpoint yet — it sits
+    behind the same docker-internal traefik that fronts the studioos
+    API; lock down with a header secret in a future milestone.
+    """
+    from datetime import UTC, datetime
+    from uuid import UUID, uuid4
+
+    from studioos.events.envelope import EventEnvelope, EventSource
+    from studioos.events.registry import registry as event_registry
+    from studioos.models import Event
+
+    event_type = body.get("event_type")
+    if not event_type:
+        raise HTTPException(400, "event_type is required")
+    version = int(body.get("event_version", 1))
+    payload = body.get("payload") or {}
+
+    try:
+        event_registry.validate(event_type, version, payload)
+    except Exception as exc:
+        raise HTTPException(400, f"schema validation failed: {exc}") from exc
+
+    correlation_id_raw = body.get("correlation_id")
+    correlation_id = (
+        UUID(correlation_id_raw) if correlation_id_raw else uuid4()
+    )
+
+    envelope = EventEnvelope(
+        event_type=event_type,
+        event_version=version,
+        payload=payload,
+        metadata=body.get("metadata", {}) or {},
+        source=EventSource(
+            type="external",
+            identifier=body.get("source", "external"),
+            run_id=None,
+        ),
+        studio_id=body.get("studio_id"),
+        correlation_id=correlation_id,
+        causation_id=None,
+        idempotency_key=body.get("idempotency_key"),
+    )
+
+    async with session_scope() as session:
+        row = Event(
+            id=envelope.event_id,
+            event_type=envelope.event_type,
+            event_version=envelope.event_version,
+            studio_id=envelope.studio_id,
+            correlation_id=envelope.correlation_id,
+            causation_id=envelope.causation_id,
+            source_type=envelope.source.type,
+            source_id=envelope.source.identifier,
+            source_run_id=None,
+            idempotency_key=envelope.idempotency_key,
+            payload=envelope.payload,
+            event_metadata=envelope.metadata,
+            occurred_at=envelope.occurred_at or datetime.now(UTC),
+        )
+        session.add(row)
+
+    return {
+        "ok": True,
+        "event_id": str(envelope.event_id),
+        "correlation_id": str(envelope.correlation_id),
+    }
+
+
 @app.get("/status")
 async def status() -> dict[str, Any]:
     from studioos.status import build_snapshot

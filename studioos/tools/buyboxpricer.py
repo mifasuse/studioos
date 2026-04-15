@@ -295,6 +295,187 @@ async def _bbp_token(client: httpx.AsyncClient, *, force: bool = False) -> str:
     return token
 
 
+_rw_engines: dict[int, AsyncEngine] = {}
+
+
+def _rw_engine() -> AsyncEngine:
+    if not settings.buyboxpricer_db_rw_url:
+        raise ToolError("STUDIOOS_BUYBOXPRICER_DB_RW_URL is not configured")
+    key = id(asyncio.get_event_loop())
+    eng = _rw_engines.get(key)
+    if eng is None:
+        from sqlalchemy.pool import NullPool
+
+        eng = create_async_engine(
+            settings.buyboxpricer_db_rw_url,
+            poolclass=NullPool,
+            pool_pre_ping=True,
+        )
+        _rw_engines[key] = eng
+    return eng
+
+
+_NULL_COST_LISTINGS_SQL = text(
+    """
+    SELECT id, asin, sku
+    FROM listings
+    WHERE is_repricing_enabled = true
+      AND listing_status IN ('Active', 'active')
+      AND acquisition_cost IS NULL
+      AND quantity > 0
+    LIMIT :lim
+    """
+)
+
+
+_PF_COST_LOOKUP_SQL = text(
+    """
+    SELECT
+        p.asin,
+        p.tr_price,
+        o.estimated_profit,
+        o.profit_margin_percent,
+        o.target_price,
+        o.source_price,
+        o.fba_fees,
+        o.referral_fee,
+        o.shipping_cost,
+        o.customs_cost
+    FROM products p
+    LEFT JOIN LATERAL (
+        SELECT *
+        FROM arbitrage_opportunities ao
+        WHERE ao.product_id = p.id
+          AND ao.status = 'active'
+        ORDER BY ao.found_at DESC NULLS LAST
+        LIMIT 1
+    ) o ON TRUE
+    WHERE p.asin = ANY(:asins)
+    """
+)
+
+
+_UPDATE_COST_SQL = text(
+    """
+    UPDATE listings
+    SET acquisition_cost = :cost
+    WHERE id = :listing_id
+    """
+)
+
+
+@register_tool(
+    "buyboxpricer.db.backfill_acquisition_cost",
+    description=(
+        "Backfill listings.acquisition_cost on BuyBoxPricer for any "
+        "active repricing-enabled listing whose acquisition_cost is "
+        "currently NULL, using PriceFinder's arbitrage_opportunities "
+        "source_price (TR cost in USD) when available. Direct DB write "
+        "via studioos_rw, column-scoped to acquisition_cost."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer"},
+            "dry_run": {"type": "boolean"},
+        },
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="amz",
+    cost_cents=0,
+)
+async def buyboxpricer_db_backfill_acquisition_cost(
+    args: dict[str, Any], ctx: ToolContext
+) -> ToolResult:
+    limit = int(args.get("limit", 200))
+    dry_run = bool(args.get("dry_run", False))
+
+    # 1. Read NULL-cost listings from BBP.
+    bbp = _engine()
+    async with bbp.connect() as conn:
+        result = await conn.execute(_NULL_COST_LISTINGS_SQL, {"lim": limit})
+        listings = [dict(r) for r in result.mappings()]
+    if not listings:
+        return ToolResult(
+            data={"updated": 0, "skipped": 0, "reason": "no null-cost rows"}
+        )
+
+    asins = [l["asin"] for l in listings if l.get("asin")]
+    if not asins:
+        return ToolResult(data={"updated": 0, "skipped": len(listings)})
+
+    # 2. Look up source_price (USD) in PriceFinder.
+    from studioos.tools.amz import _pf_engine
+
+    pf = _pf_engine()
+    async with pf.connect() as conn:
+        result = await conn.execute(_PF_COST_LOOKUP_SQL, {"asins": asins})
+        cost_rows = {r["asin"]: dict(r) for r in result.mappings()}
+
+    # 3. Compute and update.
+    rw = _rw_engine()
+    updates: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for listing in listings:
+        asin = listing["asin"]
+        cost_data = cost_rows.get(asin)
+        if not cost_data:
+            skipped.append({"asin": asin, "reason": "no pricefinder row"})
+            continue
+        # Prefer the opportunity calculator's source_price (USD already
+        # converted, with shipping + customs baked in). Fall back to
+        # source_price + customs + shipping if individual columns exist.
+        source_price = cost_data.get("source_price")
+        if source_price is None:
+            skipped.append({"asin": asin, "reason": "no source_price"})
+            continue
+        try:
+            cost = float(source_price)
+        except (TypeError, ValueError):
+            skipped.append({"asin": asin, "reason": "bad source_price"})
+            continue
+        if cost <= 0:
+            skipped.append({"asin": asin, "reason": "non-positive cost"})
+            continue
+        updates.append(
+            {
+                "listing_id": listing["id"],
+                "asin": asin,
+                "sku": listing.get("sku"),
+                "cost": round(cost, 2),
+            }
+        )
+
+    if not dry_run and updates:
+        async with rw.begin() as conn:
+            for u in updates:
+                await conn.execute(
+                    _UPDATE_COST_SQL,
+                    {"cost": u["cost"], "listing_id": u["listing_id"]},
+                )
+
+    log.info(
+        "buyboxpricer.backfill",
+        candidates=len(listings),
+        updated=0 if dry_run else len(updates),
+        skipped=len(skipped),
+        dry_run=dry_run,
+    )
+
+    return ToolResult(
+        data={
+            "candidates": len(listings),
+            "updated": 0 if dry_run else len(updates),
+            "would_update": len(updates),
+            "skipped": len(skipped),
+            "dry_run": dry_run,
+            "sample_updates": updates[:5],
+            "sample_skipped": skipped[:5],
+        }
+    )
+
+
 @register_tool(
     "buyboxpricer.api.run_single_repricing",
     description=(

@@ -21,6 +21,7 @@ from studioos.workflows import (  # noqa: F401
     app_studio_pulse,
     app_studio_reflector,
     scout_test,
+    studio_pruner,
 )
 
 __all__ = [

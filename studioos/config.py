@@ -87,6 +87,8 @@ class Settings(BaseSettings):
 
     # BuyBoxPricer (M12)
     buyboxpricer_db_url: str = ""
+    # Narrow write role — column-level UPDATE on listings.acquisition_cost only
+    buyboxpricer_db_rw_url: str = ""
     buyboxpricer_api_url: str = "https://buyboxpricer.mifasuse.com/api/v1"
     buyboxpricer_username: str = ""
     buyboxpricer_password: str = ""

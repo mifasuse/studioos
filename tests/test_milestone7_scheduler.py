@@ -51,13 +51,22 @@ async def _restore_amz_monitor():
 
 
 def test_parse_basic() -> None:
-    assert parse_schedule("@every 30s") == timedelta(seconds=30)
-    assert parse_schedule("@every 15m") == timedelta(minutes=15)
-    assert parse_schedule("@every 2h") == timedelta(hours=2)
-    assert parse_schedule("@every 2h30m") == timedelta(hours=2, minutes=30)
-    assert parse_schedule("@every 1h15m30s") == timedelta(
+    assert parse_schedule("@every 30s").every == timedelta(seconds=30)
+    assert parse_schedule("@every 15m").every == timedelta(minutes=15)
+    assert parse_schedule("@every 2h").every == timedelta(hours=2)
+    assert parse_schedule("@every 2h30m").every == timedelta(hours=2, minutes=30)
+    assert parse_schedule("@every 1h15m30s").every == timedelta(
         hours=1, minutes=15, seconds=30
     )
+
+
+def test_parse_cron() -> None:
+    s = parse_schedule("0 9 * * 1")
+    assert s.kind == "cron"
+    assert s.cron == "0 9 * * 1"
+    s = parse_schedule("@cron 0 4 * * 0")
+    assert s.kind == "cron"
+    assert s.cron == "0 4 * * 0"
 
 
 def test_parse_rejects_bad_input() -> None:

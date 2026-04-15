@@ -35,3 +35,12 @@ jobs:
             docker compose exec -T studioos uv run alembic upgrade head
             docker compose exec -T studioos uv run studioos init
             docker compose ps
+
+            # Fire amz.deploy.notification so amz-qa runs a smoke test
+            # automatically. Non-fatal — if studioos isn't responding yet
+            # the deploy still counts as successful.
+            COMMIT_SHORT=$(git rev-parse --short HEAD)
+            curl -sS -X POST http://127.0.0.1:8100/events/ingest \
+              -H "Content-Type: application/json" \
+              -d "{\"event_type\": \"amz.deploy.notification\", \"studio_id\": \"amz\", \"source\": \"github-actions\", \"payload\": {\"service\": \"studioos\", \"commit\": \"$COMMIT_SHORT\", \"success\": true, \"deployed_by\": \"github-actions\"}}" \
+              || echo "[warn] deploy notification failed"

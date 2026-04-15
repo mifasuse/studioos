@@ -34,7 +34,7 @@ def _is_due(agent: Agent, now: datetime) -> bool:
     if agent.schedule_cron is None:
         return False
     try:
-        cadence = parse_schedule(agent.schedule_cron)
+        schedule = parse_schedule(agent.schedule_cron)
     except ScheduleError as exc:
         log.warning(
             "scheduler.bad_schedule",
@@ -45,8 +45,8 @@ def _is_due(agent: Agent, now: datetime) -> bool:
         return False
     if agent.last_scheduled_at is None:
         return True
-    elapsed = now - agent.last_scheduled_at
-    return elapsed >= cadence
+    next_fire = schedule.next_fire_after(agent.last_scheduled_at)
+    return next_fire <= now
 
 
 async def tick_once(now: datetime | None = None) -> int:
