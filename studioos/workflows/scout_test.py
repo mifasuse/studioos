@@ -32,11 +32,15 @@ class ScoutState(TypedDict, total=False):
     input: dict[str, Any]
     config: dict[str, Any]
     goals: dict[str, Any]
+    recent_memories: list[dict[str, Any]]
+    kpis: list[dict[str, Any]]
     # populated during run
     scan_id: str
     mock_data: dict[str, Any]
     opportunity: dict[str, Any] | None
     events: list[dict[str, Any]]
+    memories: list[dict[str, Any]]
+    kpi_updates: list[dict[str, Any]]
     summary: str
 
 
@@ -62,7 +66,19 @@ def node_detect_opportunity(state: ScoutState) -> dict[str, Any]:
 def node_emit_event(state: ScoutState) -> dict[str, Any]:
     opportunity = state.get("opportunity")
     events: list[dict[str, Any]] = []
+    memories: list[dict[str, Any]] = []
+    kpi_updates: list[dict[str, Any]] = []
     summary: str
+
+    # Counter tracking
+    existing_state = dict(state.get("state", {}))
+    scans_total = int(existing_state.get("scans_total", 0)) + 1
+    opps_found = int(existing_state.get("opportunities_found", 0)) + (
+        1 if opportunity else 0
+    )
+    existing_state["scans_total"] = scans_total
+    existing_state["opportunities_found"] = opps_found
+    existing_state["last_scan_id"] = state["scan_id"]
 
     if opportunity:
         events.append(
@@ -78,22 +94,48 @@ def node_emit_event(state: ScoutState) -> dict[str, Any]:
                 "idempotency_key": f"scout:{state['run_id']}:{opportunity['id']}",
             }
         )
+        memories.append(
+            {
+                "content": (
+                    f"Found opportunity {opportunity['id']} with value "
+                    f"{opportunity['value']} from source scout_test scan {state['scan_id']}"
+                ),
+                "tags": ["opportunity", "scout_test"],
+                "importance": min(1.0, 0.4 + opportunity["value"] / 200),
+            }
+        )
         summary = (
             f"Detected opportunity {opportunity['id']} (value={opportunity['value']})"
         )
     else:
         summary = "No opportunity this scan"
 
-    # increment counter in agent state
-    existing_state = dict(state.get("state", {}))
-    existing_state["scans_total"] = int(existing_state.get("scans_total", 0)) + 1
-    existing_state["opportunities_found"] = int(
-        existing_state.get("opportunities_found", 0)
-    ) + (1 if opportunity else 0)
-    existing_state["last_scan_id"] = state["scan_id"]
+    # KPI snapshots — emitted every run regardless of outcome
+    kpi_updates.append(
+        {
+            "name": "scans_total",
+            "value": scans_total,
+            "metadata": {"scan_id": state["scan_id"]},
+        }
+    )
+    kpi_updates.append(
+        {
+            "name": "opportunities_found",
+            "value": opps_found,
+        }
+    )
+    if scans_total > 0:
+        kpi_updates.append(
+            {
+                "name": "hit_rate",
+                "value": round(opps_found / scans_total, 4),
+            }
+        )
 
     return {
         "events": events,
+        "memories": memories,
+        "kpi_updates": kpi_updates,
         "summary": summary,
         "state": existing_state,
     }

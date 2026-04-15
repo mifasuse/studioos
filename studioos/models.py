@@ -1,14 +1,18 @@
-"""SQLAlchemy models — mirrors migration 0001."""
+"""SQLAlchemy models — mirrors migrations 0001 + 0002."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     TIMESTAMP,
+    BigInteger,
+    Boolean,
     CheckConstraint,
+    Date,
     ForeignKey,
     ForeignKeyConstraint,
     Integer,
@@ -19,6 +23,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+EMBEDDING_DIM = 1536
 
 
 class Base(DeclarativeBase):
@@ -255,5 +261,145 @@ class Subscription(Base):
         Integer, nullable=False, server_default="50"
     )
     created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+
+# ---------------------------------------------------------------------------
+# memory_semantic (M2)
+# ---------------------------------------------------------------------------
+class MemorySemantic(Base):
+    __tablename__ = "memory_semantic"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    agent_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("agents.id")
+    )
+    studio_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("studios.id")
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
+    tags: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
+    importance: Mapped[float] = mapped_column(
+        Numeric(3, 2), nullable=False, server_default="0.5"
+    )
+    source_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("agent_runs.id")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+    accessed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    decay_after: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+# ---------------------------------------------------------------------------
+# memory_episodic (M2) — daily journal
+# ---------------------------------------------------------------------------
+class MemoryEpisodic(Base):
+    __tablename__ = "memory_episodic"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "date", name="uq_episodic_agent_date"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    agent_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("agents.id"), nullable=False
+    )
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+    content: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[str | None] = mapped_column(Text)
+    events_count: Mapped[int] = mapped_column(Integer, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+
+# ---------------------------------------------------------------------------
+# memory_procedural (M2) — versioned playbooks
+# ---------------------------------------------------------------------------
+class MemoryProcedural(Base):
+    __tablename__ = "memory_procedural"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    studio_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("studios.id")
+    )
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    author: Mapped[str] = mapped_column(Text, nullable=False)
+    change_summary: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("FALSE")
+    )
+
+
+# ---------------------------------------------------------------------------
+# kpi_targets (M2)
+# ---------------------------------------------------------------------------
+class KpiTarget(Base):
+    __tablename__ = "kpi_targets"
+    __table_args__ = (
+        CheckConstraint(
+            "direction IN ('higher_better','lower_better','range')",
+            name="kpi_targets_direction_check",
+        ),
+        UniqueConstraint(
+            "studio_id", "agent_id", "name", name="uq_kpi_target_scope"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    studio_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("studios.id")
+    )
+    agent_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("agents.id")
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(Text)
+    target_value: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    direction: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="higher_better"
+    )
+    unit: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+
+# ---------------------------------------------------------------------------
+# kpi_snapshots (M2) — time-series of current values
+# ---------------------------------------------------------------------------
+class KpiSnapshot(Base):
+    __tablename__ = "kpi_snapshots"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    studio_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("studios.id")
+    )
+    agent_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("agents.id")
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    source_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("agent_runs.id")
+    )
+    snapshot_metadata: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    recorded_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("NOW()")
     )

@@ -1,17 +1,22 @@
 """Agent runner — executes one workflow for a single run.
 
 Responsibilities (per run):
-  1. Load agent config + state
+  1. Load agent config + state + recent memories + KPI state
   2. Resolve workflow from template
-  3. Construct workflow input (agent_state + trigger payload + config)
+  3. Construct workflow input (agent_state + memories + kpis + trigger payload)
   4. Invoke workflow (LangGraph or plain callable in v1)
-  5. Apply output deltas: agent_state update, events to publish
-  6. Transactionally commit state + outbox events + run completion
+  5. Apply output deltas:
+       - agent_state update
+       - events to publish (outbox)
+       - new memories to persist
+       - KPI snapshots to record
+  6. Transactionally commit everything together with run completion
 
 Errors are captured on the run record; retry policy is handled by the dispatcher.
 """
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -21,7 +26,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from studioos.events.envelope import EventEnvelope, EventSource
 from studioos.events.registry import registry
+from studioos.kpi.store import get_current_state, record_snapshot
 from studioos.logging import bind_agent, bind_correlation, bind_run, get_logger
+from studioos.memory.store import record_memory, search_memory
 from studioos.models import (
     Agent,
     AgentRun,
@@ -68,6 +75,57 @@ async def execute_run(session: AsyncSession, run_id: UUID) -> AgentRun:
 
     workflow = resolve_workflow(agent.template_id, agent.template_version)
 
+    # Pre-load context: recent memories + current KPI state
+    recent_memories: list[dict[str, Any]] = []
+    try:
+        memory_query = (
+            (run.input_snapshot or {}).get("memory_query")
+            or run.trigger_ref
+            or agent.id
+        )
+        results = await search_memory(
+            session,
+            query=str(memory_query),
+            agent_id=agent.id,
+            limit=5,
+        )
+        recent_memories = [
+            {
+                "id": str(r.id),
+                "content": r.content,
+                "tags": r.tags,
+                "importance": r.importance,
+                "distance": r.distance,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in results
+        ]
+    except Exception:  # noqa: BLE001
+        log.exception("runner.memory_load_failed")
+
+    kpi_state: list[dict[str, Any]] = []
+    try:
+        states = await get_current_state(
+            session,
+            studio_id=agent.studio_id,
+            agent_id=agent.id,
+        )
+        kpi_state = [
+            {
+                "name": s.name,
+                "display_name": s.display_name,
+                "target": float(s.target) if s.target is not None else None,
+                "current": float(s.current) if s.current is not None else None,
+                "direction": s.direction,
+                "unit": s.unit,
+                "reached": s.gap.reached if s.gap else None,
+                "delta": float(s.gap.delta) if s.gap else None,
+            }
+            for s in states
+        ]
+    except Exception:  # noqa: BLE001
+        log.exception("runner.kpi_load_failed")
+
     workflow_input: dict[str, Any] = {
         "agent_id": agent.id,
         "studio_id": agent.studio_id,
@@ -79,6 +137,8 @@ async def execute_run(session: AsyncSession, run_id: UUID) -> AgentRun:
         "input": run.input_snapshot or {},
         "config": agent.heartbeat_config or {},
         "goals": agent.goals or {},
+        "recent_memories": recent_memories,
+        "kpis": kpi_state,
     }
 
     try:
@@ -93,9 +153,14 @@ async def execute_run(session: AsyncSession, run_id: UUID) -> AgentRun:
     # Apply deltas
     new_state = output.get("state", state_row.state)
     events_out: list[dict[str, Any]] = output.get("events", [])
+    memories_out: list[dict[str, Any]] = output.get("memories", [])
+    kpi_updates_out: list[dict[str, Any]] = output.get("kpi_updates", [])
+
     run.output_snapshot = {
         "state": new_state,
         "events": events_out,
+        "memories": memories_out,
+        "kpi_updates": kpi_updates_out,
         "summary": output.get("summary"),
     }
 
@@ -103,6 +168,36 @@ async def execute_run(session: AsyncSession, run_id: UUID) -> AgentRun:
     state_row.last_run_id = run.id
     state_row.last_run_at = datetime.now(UTC)
     state_row.updated_at = datetime.now(UTC)
+
+    # Persist new memories
+    for mem in memories_out:
+        try:
+            await record_memory(
+                session,
+                content=mem["content"],
+                agent_id=agent.id,
+                studio_id=agent.studio_id,
+                tags=mem.get("tags"),
+                importance=float(mem.get("importance", 0.5)),
+                source_run_id=run.id,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("runner.memory_persist_failed")
+
+    # Record KPI snapshots
+    for kpi in kpi_updates_out:
+        try:
+            await record_snapshot(
+                session,
+                name=kpi["name"],
+                value=kpi["value"],
+                studio_id=agent.studio_id,
+                agent_id=agent.id,
+                source_run_id=run.id,
+                metadata=kpi.get("metadata"),
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("runner.kpi_persist_failed")
 
     # Write events to outbox
     for ev_data in events_out:
@@ -136,6 +231,8 @@ async def execute_run(session: AsyncSession, run_id: UUID) -> AgentRun:
     log.info(
         "run.completed",
         events_count=len(events_out),
+        memories_count=len(memories_out),
+        kpi_updates_count=len(kpi_updates_out),
         summary=output.get("summary"),
     )
     return run

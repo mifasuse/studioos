@@ -241,6 +241,110 @@ def inspect(
 
 
 @app.command()
+def memory(
+    query: Annotated[str | None, typer.Option(help="Semantic search query")] = None,
+    agent: Annotated[str | None, typer.Option(help="Filter by agent_id")] = None,
+    studio: Annotated[str | None, typer.Option(help="Filter by studio_id")] = None,
+    limit: Annotated[int, typer.Option(help="Max results")] = 10,
+) -> None:
+    """List or search semantic memories."""
+    from sqlalchemy import desc, select
+
+    from studioos.memory.store import search_memory
+    from studioos.models import MemorySemantic
+
+    async def _run() -> None:
+        async with session_scope() as session:
+            if query:
+                results = await search_memory(
+                    session,
+                    query=query,
+                    agent_id=agent,
+                    studio_id=studio,
+                    limit=limit,
+                )
+                table = Table(title=f"Memory search: {query!r}")
+                table.add_column("Score", style="dim", justify="right")
+                table.add_column("Agent", style="magenta")
+                table.add_column("Tags", style="cyan")
+                table.add_column("Content")
+                for r in results:
+                    table.add_row(
+                        f"{1 - r.distance:.3f}",
+                        agent or "",
+                        ",".join(r.tags or []),
+                        r.content[:80],
+                    )
+                console.print(table)
+                return
+            stmt = select(MemorySemantic).order_by(
+                desc(MemorySemantic.created_at)
+            ).limit(limit)
+            if agent:
+                stmt = stmt.where(MemorySemantic.agent_id == agent)
+            if studio:
+                stmt = stmt.where(MemorySemantic.studio_id == studio)
+            rows = (await session.execute(stmt)).scalars().all()
+            table = Table(title=f"Recent memories ({len(rows)})")
+            table.add_column("When", style="dim")
+            table.add_column("Agent", style="magenta")
+            table.add_column("Tags", style="cyan")
+            table.add_column("Content")
+            for r in rows:
+                table.add_row(
+                    r.created_at.strftime("%H:%M:%S"),
+                    r.agent_id or "",
+                    ",".join(r.tags or []),
+                    r.content[:80],
+                )
+            console.print(table)
+
+    asyncio.run(_run())
+
+
+@app.command()
+def kpi(
+    studio: Annotated[str | None, typer.Option(help="Filter by studio_id")] = None,
+    agent: Annotated[str | None, typer.Option(help="Filter by agent_id")] = None,
+) -> None:
+    """Show KPI state for a scope (target vs current + gap)."""
+    from studioos.kpi.store import get_current_state
+
+    async def _run() -> None:
+        async with session_scope() as session:
+            states = await get_current_state(
+                session, studio_id=studio, agent_id=agent
+            )
+        if not states:
+            console.print("[dim]No KPI targets defined for this scope[/dim]")
+            return
+        table = Table(title="KPI State")
+        table.add_column("Name", style="cyan")
+        table.add_column("Target", justify="right")
+        table.add_column("Current", justify="right")
+        table.add_column("Direction", style="dim")
+        table.add_column("Reached")
+        table.add_column("Gap", justify="right")
+        for s in states:
+            reached = ""
+            gap_str = ""
+            if s.gap is not None:
+                reached = "✓" if s.gap.reached else "—"
+                gap_str = str(s.gap.delta)
+            table.add_row(
+                s.display_name or s.name,
+                str(s.target) if s.target is not None else "-",
+                str(s.current) if s.current is not None else "-",
+                s.direction,
+                reached,
+                gap_str,
+            )
+        console.print(table)
+
+    asyncio.run(_run())
+
+
+@app.command()
 def runtime() -> None:
     """Start the runtime loop (scheduler + outbox)."""
     from studioos.runtime.loop import run_forever

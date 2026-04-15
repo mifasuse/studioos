@@ -10,8 +10,17 @@ from sqlalchemy import desc, select
 
 from studioos import __version__
 from studioos.db import session_scope
+from studioos.kpi.store import get_current_state
 from studioos.logging import configure_logging, get_logger
-from studioos.models import Agent, AgentRun, Event, Studio
+from studioos.memory.store import search_memory
+from studioos.models import (
+    Agent,
+    AgentRun,
+    Event,
+    KpiSnapshot,
+    MemorySemantic,
+    Studio,
+)
 
 log = get_logger(__name__)
 
@@ -135,6 +144,119 @@ def _serialize_run(run: AgentRun) -> dict[str, Any]:
         "error": run.error,
         "output": run.output_snapshot,
     }
+
+
+@app.get("/memory")
+async def list_memory(
+    query: str | None = None,
+    agent_id: str | None = None,
+    studio_id: str | None = None,
+    limit: int = Query(default=10, le=100),
+) -> list[dict[str, Any]]:
+    """List or semantic-search memories."""
+    async with session_scope() as session:
+        if query:
+            results = await search_memory(
+                session,
+                query=query,
+                agent_id=agent_id,
+                studio_id=studio_id,
+                limit=limit,
+            )
+            return [
+                {
+                    "id": str(r.id),
+                    "content": r.content,
+                    "tags": r.tags,
+                    "importance": r.importance,
+                    "score": 1 - r.distance,
+                    "created_at": r.created_at.isoformat(),
+                    "source_run_id": str(r.source_run_id) if r.source_run_id else None,
+                }
+                for r in results
+            ]
+        stmt = select(MemorySemantic).order_by(desc(MemorySemantic.created_at)).limit(limit)
+        if agent_id:
+            stmt = stmt.where(MemorySemantic.agent_id == agent_id)
+        if studio_id:
+            stmt = stmt.where(MemorySemantic.studio_id == studio_id)
+        rows = (await session.execute(stmt)).scalars().all()
+        return [
+            {
+                "id": str(r.id),
+                "agent_id": r.agent_id,
+                "studio_id": r.studio_id,
+                "content": r.content,
+                "tags": r.tags,
+                "importance": float(r.importance),
+                "created_at": r.created_at.isoformat(),
+                "source_run_id": str(r.source_run_id) if r.source_run_id else None,
+            }
+            for r in rows
+        ]
+
+
+@app.get("/kpi")
+async def list_kpi(
+    studio_id: str | None = None,
+    agent_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Show current KPI state for a scope."""
+    async with session_scope() as session:
+        states = await get_current_state(
+            session, studio_id=studio_id, agent_id=agent_id
+        )
+    out: list[dict[str, Any]] = []
+    for s in states:
+        item: dict[str, Any] = {
+            "name": s.name,
+            "display_name": s.display_name,
+            "target": float(s.target) if s.target is not None else None,
+            "current": float(s.current) if s.current is not None else None,
+            "direction": s.direction,
+            "unit": s.unit,
+            "last_recorded_at": s.last_recorded_at.isoformat()
+            if s.last_recorded_at
+            else None,
+        }
+        if s.gap is not None:
+            item["gap"] = {
+                "delta": float(s.gap.delta),
+                "reached": s.gap.reached,
+            }
+        out.append(item)
+    return out
+
+
+@app.get("/kpi/snapshots")
+async def list_kpi_snapshots(
+    name: str | None = None,
+    agent_id: str | None = None,
+    studio_id: str | None = None,
+    limit: int = Query(default=50, le=500),
+) -> list[dict[str, Any]]:
+    """Return time-series of KPI snapshot values."""
+    async with session_scope() as session:
+        stmt = select(KpiSnapshot).order_by(desc(KpiSnapshot.recorded_at)).limit(limit)
+        if name:
+            stmt = stmt.where(KpiSnapshot.name == name)
+        if agent_id:
+            stmt = stmt.where(KpiSnapshot.agent_id == agent_id)
+        if studio_id:
+            stmt = stmt.where(KpiSnapshot.studio_id == studio_id)
+        rows = (await session.execute(stmt)).scalars().all()
+        return [
+            {
+                "id": r.id,
+                "name": r.name,
+                "value": float(r.value),
+                "studio_id": r.studio_id,
+                "agent_id": r.agent_id,
+                "source_run_id": str(r.source_run_id) if r.source_run_id else None,
+                "recorded_at": r.recorded_at.isoformat(),
+            }
+            for r in rows
+        ]
 
 
 def _serialize_event(event: Event) -> dict[str, Any]:

@@ -23,10 +23,14 @@ class AnalystState(TypedDict, total=False):
     state: dict[str, Any]
     trigger_type: str
     input: dict[str, Any]
+    recent_memories: list[dict[str, Any]]
+    kpis: list[dict[str, Any]]
     # populated during run
     received_event: dict[str, Any] | None
     verdict: str
     events: list[dict[str, Any]]
+    memories: list[dict[str, Any]]
+    kpi_updates: list[dict[str, Any]]
     summary: str
 
 
@@ -48,6 +52,9 @@ def node_acknowledge(state: AnalystState) -> dict[str, Any]:
     verdict = state.get("verdict", "unknown")
 
     events: list[dict[str, Any]] = []
+    memories: list[dict[str, Any]] = []
+    kpi_updates: list[dict[str, Any]] = []
+
     if payload.get("opportunity_id"):
         events.append(
             {
@@ -62,15 +69,43 @@ def node_acknowledge(state: AnalystState) -> dict[str, Any]:
                 "idempotency_key": f"analyst:{state['run_id']}:{payload['opportunity_id']}",
             }
         )
+        memories.append(
+            {
+                "content": (
+                    f"Verdict {verdict.upper()} for opportunity "
+                    f"{payload['opportunity_id']} (value={payload.get('value')})"
+                ),
+                "tags": ["verdict", verdict, "analyst_test"],
+                "importance": 0.6 if verdict == "accept" else 0.4,
+            }
+        )
 
     existing_state = dict(state.get("state", {}))
-    existing_state["evaluated_total"] = int(existing_state.get("evaluated_total", 0)) + 1
-    existing_state[f"{verdict}_total"] = int(
-        existing_state.get(f"{verdict}_total", 0)
-    ) + 1
+    evaluated = int(existing_state.get("evaluated_total", 0)) + 1
+    accept_total = int(existing_state.get("accept_total", 0))
+    reject_total = int(existing_state.get("reject_total", 0))
+    if verdict == "accept":
+        accept_total += 1
+    elif verdict == "reject":
+        reject_total += 1
+
+    existing_state["evaluated_total"] = evaluated
+    existing_state["accept_total"] = accept_total
+    existing_state["reject_total"] = reject_total
+
+    kpi_updates.append({"name": "evaluated_total", "value": evaluated})
+    if evaluated > 0:
+        kpi_updates.append(
+            {
+                "name": "acceptance_rate",
+                "value": round(accept_total / evaluated, 4),
+            }
+        )
 
     return {
         "events": events,
+        "memories": memories,
+        "kpi_updates": kpi_updates,
         "summary": f"Evaluated opportunity → {verdict}",
         "state": existing_state,
     }

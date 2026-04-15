@@ -32,9 +32,16 @@ async def db_setup() -> AsyncIterator[None]:
 
 @pytest_asyncio.fixture
 async def db_session(db_setup: None) -> AsyncIterator[None]:
-    """Clean run/event tables between tests but keep seeded studio config."""
+    """Clean transient tables between tests but keep seeded studio config."""
     async with session_scope() as session:
-        for table in ("events", "agent_runs"):
+        for table in (
+            "kpi_snapshots",
+            "kpi_targets",
+            "memory_semantic",
+            "memory_episodic",
+            "events",
+            "agent_runs",
+        ):
             await session.execute(Base.metadata.tables[table].delete())
         # Reset agent_state rows
         from sqlalchemy import update
