@@ -333,14 +333,10 @@ _PF_COST_LOOKUP_SQL = text(
     SELECT
         p.asin,
         p.tr_price,
-        o.estimated_profit,
-        o.profit_margin_percent,
-        o.target_price,
+        p.package_weight_g,
         o.source_price,
-        o.fba_fees,
-        o.referral_fee,
-        o.shipping_cost,
-        o.customs_cost
+        o.shipping_cost AS opp_shipping,
+        o.customs_cost AS opp_customs
     FROM products p
     LEFT JOIN LATERAL (
         SELECT *
@@ -351,6 +347,14 @@ _PF_COST_LOOKUP_SQL = text(
         LIMIT 1
     ) o ON TRUE
     WHERE p.asin = ANY(:asins)
+    """
+)
+
+
+_PF_GLOBAL_SETTINGS_SQL = text(
+    """
+    SELECT key, value FROM global_settings
+    WHERE key IN ('exchange_rate', 'shipping_cost', 'customs_rate', 'shipping_rate_per_kg')
     """
 )
 
@@ -405,13 +409,26 @@ async def buyboxpricer_db_backfill_acquisition_cost(
     if not asins:
         return ToolResult(data={"updated": 0, "skipped": len(listings)})
 
-    # 2. Look up source_price (USD) in PriceFinder.
+    # 2. Look up source_price (USD) in PriceFinder + global settings.
     from studioos.tools.amz import _pf_engine
 
     pf = _pf_engine()
     async with pf.connect() as conn:
         result = await conn.execute(_PF_COST_LOOKUP_SQL, {"asins": asins})
         cost_rows = {r["asin"]: dict(r) for r in result.mappings()}
+        gs_result = await conn.execute(_PF_GLOBAL_SETTINGS_SQL)
+        global_settings = {r["key"]: r["value"] for r in gs_result.mappings()}
+
+    def _gs_float(key: str, default: float) -> float:
+        try:
+            return float(global_settings.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    exchange_rate = _gs_float("exchange_rate", 30.0)
+    shipping_cost = _gs_float("shipping_cost", 6.0)
+    customs_rate = _gs_float("customs_rate", 0.4)
+    shipping_per_kg = _gs_float("shipping_rate_per_kg", 6.0)
 
     # 3. Compute and update.
     rw = _rw_engine()
@@ -423,18 +440,42 @@ async def buyboxpricer_db_backfill_acquisition_cost(
         if not cost_data:
             skipped.append({"asin": asin, "reason": "no pricefinder row"})
             continue
-        # Prefer the opportunity calculator's source_price (USD already
-        # converted, with shipping + customs baked in). Fall back to
-        # source_price + customs + shipping if individual columns exist.
-        source_price = cost_data.get("source_price")
-        if source_price is None:
-            skipped.append({"asin": asin, "reason": "no source_price"})
-            continue
-        try:
-            cost = float(source_price)
-        except (TypeError, ValueError):
-            skipped.append({"asin": asin, "reason": "bad source_price"})
-            continue
+
+        # Preferred: opportunity calculator's source_price (already USD
+        # with shipping + customs baked in).
+        cost: float | None = None
+        source = cost_data.get("source_price")
+        if source is not None:
+            try:
+                v = float(source)
+                if v > 0:
+                    cost = round(v, 2)
+            except (TypeError, ValueError):
+                pass
+
+        # Fallback: derive from products.tr_price using global_settings.
+        if cost is None:
+            tr_price = cost_data.get("tr_price")
+            if tr_price is None:
+                skipped.append({"asin": asin, "reason": "no source_price + no tr_price"})
+                continue
+            try:
+                tr_price_usd = float(tr_price) / exchange_rate
+            except (TypeError, ValueError, ZeroDivisionError):
+                skipped.append({"asin": asin, "reason": "bad tr_price"})
+                continue
+
+            weight_g = cost_data.get("package_weight_g") or 0
+            try:
+                shipping = max(
+                    shipping_cost,
+                    (float(weight_g) / 1000.0) * shipping_per_kg,
+                )
+            except (TypeError, ValueError):
+                shipping = shipping_cost
+            customs = tr_price_usd * customs_rate
+            cost = round(tr_price_usd + shipping + customs, 2)
+
         if cost <= 0:
             skipped.append({"asin": asin, "reason": "non-positive cost"})
             continue
@@ -443,7 +484,7 @@ async def buyboxpricer_db_backfill_acquisition_cost(
                 "listing_id": listing["id"],
                 "asin": asin,
                 "sku": listing.get("sku"),
-                "cost": round(cost, 2),
+                "cost": cost,
             }
         )
 
