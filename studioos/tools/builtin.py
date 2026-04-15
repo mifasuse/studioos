@@ -1,4 +1,8 @@
-"""Built-in tool implementations — registered on import."""
+"""Built-in tool implementations — registered on import.
+
+Importing this module also pulls in AMZ-specific tool adapters so the
+global registry is populated in one shot.
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -10,6 +14,7 @@ from studioos.db import session_scope
 from studioos.kpi.store import get_current_state
 from studioos.memory.store import search_memory
 
+from . import amz as _amz  # noqa: F401  (registers AMZ tools)
 from .base import ToolContext, ToolError, ToolResult
 from .registry import register_tool
 

@@ -18,7 +18,7 @@ from studioos.studios import seed_all
 
 # Workflow imports must happen so they register themselves
 from studioos import workflows  # noqa: F401
-from studioos.events import schemas_test  # noqa: F401
+from studioos.events import schemas_amz, schemas_test  # noqa: F401
 from studioos.tools import builtin as _builtin_tools  # noqa: F401
 
 app = typer.Typer(help="StudioOS control CLI")

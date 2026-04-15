@@ -53,5 +53,9 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
+    # AMZ tool services (M6)
+    pricefinder_url: str = ""
+    pricefinder_timeout_seconds: float = 10.0
+
 
 settings = Settings()

@@ -1,0 +1,28 @@
+id: amz
+display_name: "Amazon Arbitrage Studio"
+mission: "Monitor Amazon listings, detect pricing opportunities, and (in future phases) execute repricing and ad optimization."
+status: active
+templates:
+  - id: amz_monitor
+    version: 1
+    display_name: "AMZ Price Monitor"
+    description: "Polls PriceFinder for a watchlist of ASINs and records price observations + anomalies"
+    workflow_ref: amz_monitor
+agents:
+  - id: amz-monitor
+    template_id: amz_monitor
+    template_version: 1
+    display_name: "AMZ Monitor"
+    mode: normal
+    heartbeat_config: {}
+    goals:
+      anomaly_threshold_pct: 5.0
+      watchlist:
+        - "B08N5WRWNW"
+        - "B07FZ8S74R"
+        - "B09G9FPHY6"
+    tool_scope:
+      - pricefinder.lookup_asin
+      - memory.search
+      - budget.check
+subscriptions: []

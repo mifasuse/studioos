@@ -12,7 +12,7 @@ from studioos.runtime.outbox import outbox_loop
 
 # Ensure workflows + event schemas + tools are imported and registered
 from studioos import workflows  # noqa: F401
-from studioos.events import schemas_test  # noqa: F401
+from studioos.events import schemas_amz, schemas_test  # noqa: F401
 from studioos.tools import builtin as _builtin_tools  # noqa: F401
 
 log = get_logger(__name__)

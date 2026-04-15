@@ -20,7 +20,7 @@ from studioos.studios import seed_all  # noqa: E402
 
 # Import workflows + event schemas + tools so they register
 from studioos import workflows  # noqa: F401, E402
-from studioos.events import schemas_test  # noqa: F401, E402
+from studioos.events import schemas_amz, schemas_test  # noqa: F401, E402
 from studioos.tools import builtin as _builtin_tools  # noqa: F401, E402
 
 
