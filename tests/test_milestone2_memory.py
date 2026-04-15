@@ -23,16 +23,18 @@ from studioos.kpi.store import (
 )
 from studioos.memory.store import search_memory
 from studioos.models import KpiSnapshot, MemorySemantic
+from studioos.runtime.consumer import drain_once
 from studioos.runtime.dispatcher import dispatch_once
 from studioos.runtime.outbox import publish_batch
 from studioos.runtime.triggers import create_pending_run
 
 
-async def _drain(max_iters: int = 10) -> None:
+async def _drain(max_iters: int = 15) -> None:
     for _ in range(max_iters):
         ran = await dispatch_once()
         published = await publish_batch()
-        if ran is None and published == 0:
+        consumed = await drain_once()
+        if ran is None and published == 0 and consumed == 0:
             return
         await asyncio.sleep(0)
 

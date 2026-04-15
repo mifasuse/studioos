@@ -19,6 +19,8 @@ dependencies = [
     "asyncpg>=0.30",
     "alembic>=1.13",
     "pgvector>=0.3",
+    # Event bus
+    "redis>=5.0",
     # Orchestration
     "langgraph>=0.2.50",
     "langgraph-checkpoint-postgres>=2.0",

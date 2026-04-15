@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 
 import pytest_asyncio
 
+from studioos.bus import reset_bus
 from studioos.db import dispose_all, get_engine, session_scope
 from studioos.models import Base
 from studioos.studios import seed_all
@@ -49,4 +50,5 @@ async def db_session(db_setup: None) -> AsyncIterator[None]:
         from studioos.models import AgentState
 
         await session.execute(update(AgentState).values(state={}))
+    reset_bus()
     yield

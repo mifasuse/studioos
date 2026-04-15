@@ -239,6 +239,12 @@ class Event(Base):
     publish_attempts: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="0"
     )
+    dead_letter_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True)
+    )
+    delivery_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
 
 
 # ---------------------------------------------------------------------------

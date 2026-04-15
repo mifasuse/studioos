@@ -1,42 +1,47 @@
-"""Outbox publisher — reads unpublished events, dispatches to subscribers.
+"""Outbox publisher — reads unpublished events, pushes to the bus.
 
-Milestone 1: in-process dispatch. No Redis. Subscription resolution happens
-directly in Python; when a subscription matches, a new pending run is
-enqueued for the subscriber agent.
+Postgres remains the source of truth (atomic state+event commit). The publisher
+drains the outbox and XADDs each envelope to the configured bus backend. Once
+acknowledged by the bus, we mark `published_at`.
 
-M3 will replace the inner push with Redis Streams XADD.
+Consumer-side fan-out + subscription matching now lives in
+`runtime.consumer`, not here.
 """
 from __future__ import annotations
 
 import asyncio
-import fnmatch
 from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from studioos.bus import EventEnvelope, get_bus
 from studioos.db import session_scope
 from studioos.logging import bind_correlation, bind_run, get_logger
-from studioos.models import Event, Subscription
-from studioos.runtime.triggers import create_pending_run
+from studioos.models import Event
 
 log = get_logger(__name__)
 
 
-async def _match_subscriptions(
-    session: AsyncSession, event: Event
-) -> list[Subscription]:
-    """Return subscriptions whose pattern matches the event type."""
-    all_subs = (await session.execute(select(Subscription))).scalars().all()
-    matched = [s for s in all_subs if fnmatch.fnmatch(event.event_type, s.event_pattern)]
-    # Highest priority first
-    matched.sort(key=lambda s: s.priority)
-    return matched
+def _to_envelope(event: Event) -> EventEnvelope:
+    return EventEnvelope(
+        event_id=event.id,
+        event_type=event.event_type,
+        event_version=event.event_version,
+        correlation_id=event.correlation_id,
+        causation_id=event.causation_id,
+        studio_id=event.studio_id,
+        source_type=event.source_type,
+        source_id=event.source_id,
+        source_run_id=event.source_run_id,
+        payload=event.payload or {},
+        metadata=event.event_metadata or {},
+        occurred_at=event.occurred_at,
+    )
 
 
-async def process_event(session: AsyncSession, event_id: UUID) -> int:
-    """Deliver one event to all matching subscribers. Returns fanout count."""
+async def _publish_one(session: AsyncSession, event_id: UUID) -> bool:
     event = (
         await session.execute(select(Event).where(Event.id == event_id))
     ).scalar_one()
@@ -44,46 +49,37 @@ async def process_event(session: AsyncSession, event_id: UUID) -> int:
     bind_correlation(event.correlation_id)
     bind_run(event.source_run_id)
 
-    subs = await _match_subscriptions(session, event)
-    if not subs:
-        log.debug("outbox.no_subscribers", event_type=event.event_type)
-    for sub in subs:
-        if sub.action == "wake_agent":
-            await create_pending_run(
-                session,
-                agent_id=sub.subscriber_id,
-                trigger_type="event",
-                trigger_ref=str(event.id),
-                correlation_id=event.correlation_id,
-                parent_run_id=event.source_run_id,
-                priority=sub.priority,
-                input_snapshot={
-                    "event_id": str(event.id),
-                    "event_type": event.event_type,
-                    "event_version": event.event_version,
-                    "payload": event.payload,
-                    "metadata": event.event_metadata,
-                },
-            )
-            log.info(
-                "outbox.delivered",
-                event_type=event.event_type,
-                subscriber=sub.subscriber_id,
-            )
-        else:
-            log.warning("outbox.unknown_action", action=sub.action)
+    envelope = _to_envelope(event)
+    bus = get_bus()
+    try:
+        bus_id = await bus.publish(envelope)
+    except Exception:
+        event.publish_attempts = (event.publish_attempts or 0) + 1
+        log.exception(
+            "outbox.publish_failed",
+            event_id=str(event_id),
+            event_type=event.event_type,
+        )
+        return False
 
     event.published_at = datetime.now(UTC)
     event.publish_attempts = (event.publish_attempts or 0) + 1
-    return len(subs)
+    log.info(
+        "outbox.published",
+        event_id=str(event_id),
+        event_type=event.event_type,
+        bus_id=bus_id,
+    )
+    return True
 
 
 async def publish_batch() -> int:
-    """Publish all unpublished events in one pass."""
+    """Publish all unpublished events in one pass. Returns published count."""
     async with session_scope() as session:
         stmt = (
             select(Event.id)
             .where(Event.published_at.is_(None))
+            .where(Event.dead_letter_at.is_(None))
             .order_by(Event.recorded_at.asc())
             .limit(50)
             .with_for_update(skip_locked=True)
@@ -91,12 +87,14 @@ async def publish_batch() -> int:
         rows = (await session.execute(stmt)).scalars().all()
         if not rows:
             return 0
+        ok = 0
         for event_id in rows:
             try:
-                await process_event(session, event_id)
+                if await _publish_one(session, event_id):
+                    ok += 1
             except Exception:
-                log.exception("outbox.publish_failed", event_id=str(event_id))
-        return len(rows)
+                log.exception("outbox.batch_error", event_id=str(event_id))
+        return ok
 
 
 async def outbox_loop(stop_event: asyncio.Event, poll_seconds: float) -> None:

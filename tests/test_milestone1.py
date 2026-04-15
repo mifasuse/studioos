@@ -23,19 +23,21 @@ from sqlalchemy import select
 
 from studioos.db import session_scope
 from studioos.models import AgentRun, Event
+from studioos.runtime.consumer import drain_once
 from studioos.runtime.dispatcher import dispatch_once
 from studioos.runtime.outbox import publish_batch
 from studioos.runtime.triggers import create_pending_run
 
 
-async def _drain_runtime(max_iters: int = 10) -> None:
-    """Alternately dispatch + publish until quiescent (no work left)."""
+async def _drain_runtime(max_iters: int = 15) -> None:
+    """Alternately dispatch + publish + consume until quiescent."""
     for _ in range(max_iters):
         ran = await dispatch_once()
         published = await publish_batch()
-        if ran is None and published == 0:
+        consumed = await drain_once()
+        if ran is None and published == 0 and consumed == 0:
             return
-        await asyncio.sleep(0)  # cooperative yield
+        await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio

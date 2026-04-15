@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     # LLM — OpenAI (coding)
     openai_api_key: str = ""
 
+    # Event bus
+    redis_url: str = "redis://localhost:6379/0"
+    bus_backend: str = "inproc"  # inproc | redis
+    bus_stream: str = "studioos:events"
+    bus_dlq_stream: str = "studioos:events:dlq"
+    bus_max_delivery_attempts: int = 5
+    bus_claim_idle_ms: int = 60_000
+    bus_read_block_ms: int = 1000
+
     # Runtime
     scheduler_tick_seconds: float = 1.0
     outbox_poll_seconds: float = 0.5

@@ -6,6 +6,7 @@ import signal
 
 from studioos.config import settings
 from studioos.logging import configure_logging, get_logger
+from studioos.runtime.consumer import consumer_loop
 from studioos.runtime.dispatcher import dispatch_loop
 from studioos.runtime.outbox import outbox_loop
 
@@ -42,12 +43,21 @@ async def run_forever() -> None:
         outbox_loop(stop_event, settings.outbox_poll_seconds),
         name="outbox",
     )
+    consumer_task = asyncio.create_task(
+        consumer_loop(stop_event),
+        name="consumer",
+    )
 
     try:
         await stop_event.wait()
     finally:
         log.info("runtime.stopping")
-        await asyncio.gather(dispatcher_task, outbox_task, return_exceptions=True)
+        await asyncio.gather(
+            dispatcher_task,
+            outbox_task,
+            consumer_task,
+            return_exceptions=True,
+        )
         log.info("runtime.stopped")
 
 

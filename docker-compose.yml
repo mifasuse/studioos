@@ -17,6 +17,19 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: studioos-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - studioos-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   studioos:
     build:
       context: .
@@ -27,16 +40,22 @@ services:
       - .env
     environment:
       STUDIOOS_DATABASE_URL: postgresql+asyncpg://studioos:${POSTGRES_PASSWORD:-studioos}@postgres:5432/studioos
+      STUDIOOS_REDIS_URL: redis://redis:6379/0
+      STUDIOOS_BUS_BACKEND: redis
     ports:
       - "8100:8000"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - default
 
 volumes:
   studioos-pgdata:
+    driver: local
+  studioos-redis:
     driver: local
 
 networks:
