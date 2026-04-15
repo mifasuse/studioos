@@ -284,6 +284,111 @@ async def pricefinder_db_lookup_asins(
     )
 
 
+_TOP_OPPS_SQL = text(
+    """
+    SELECT
+        o.id AS opportunity_id,
+        p.asin,
+        p.title,
+        p.brand,
+        o.source_price,
+        o.target_price,
+        o.estimated_profit,
+        o.profit_margin_percent,
+        o.roi_percent,
+        o.monthly_sold,
+        o.competition_level,
+        o.found_at
+    FROM arbitrage_opportunities o
+    JOIN products p ON p.id = o.product_id
+    WHERE o.status = 'active'
+      AND p.is_active = true
+      AND p.asin IS NOT NULL
+      AND o.estimated_profit >= :min_profit
+      AND COALESCE(o.profit_margin_percent, 0) >= :min_margin
+    ORDER BY o.estimated_profit DESC NULLS LAST
+    LIMIT :lim
+    """
+)
+
+
+@register_tool(
+    "pricefinder.db.top_opportunities",
+    description=(
+        "Return the top-N active arbitrage opportunities from PriceFinder's "
+        "replica, filtered by minimum estimated profit and margin. "
+        "Used by the monitor/analyst to build a dynamic watchlist."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer"},
+            "min_profit_dollars": {"type": "number"},
+            "min_margin_pct": {"type": "number"},
+        },
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="amz",
+    cost_cents=0,
+)
+async def pricefinder_db_top_opportunities(
+    args: dict[str, Any], ctx: ToolContext
+) -> ToolResult:
+    limit = int(args.get("limit", 20))
+    min_profit = float(args.get("min_profit_dollars", 10.0))
+    min_margin = float(args.get("min_margin_pct", 30.0))
+    engine = _pf_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            _TOP_OPPS_SQL,
+            {"lim": limit, "min_profit": min_profit, "min_margin": min_margin},
+        )
+        rows = [dict(r) for r in result.mappings()]
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        items.append(
+            {
+                "opportunity_id": row["opportunity_id"],
+                "asin": row["asin"],
+                "title": (row.get("title") or "")[:120],
+                "brand": row.get("brand"),
+                "source_price": float(row["source_price"])
+                if row.get("source_price") is not None
+                else None,
+                "target_price": float(row["target_price"])
+                if row.get("target_price") is not None
+                else None,
+                "estimated_profit": float(row["estimated_profit"])
+                if row.get("estimated_profit") is not None
+                else None,
+                "profit_margin_percent": float(row["profit_margin_percent"])
+                if row.get("profit_margin_percent") is not None
+                else None,
+                "roi_percent": float(row["roi_percent"])
+                if row.get("roi_percent") is not None
+                else None,
+                "monthly_sold": row.get("monthly_sold"),
+                "competition_level": row.get("competition_level"),
+                "found_at": row["found_at"].isoformat()
+                if row.get("found_at")
+                else None,
+            }
+        )
+    return ToolResult(
+        data={
+            "items": items,
+            "count": len(items),
+            "filters": {
+                "limit": limit,
+                "min_profit_dollars": min_profit,
+                "min_margin_pct": min_margin,
+            },
+        }
+    )
+
+
 @register_tool(
     "pricefinder.lookup_asin",
     description=(

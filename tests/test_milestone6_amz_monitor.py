@@ -106,6 +106,13 @@ async def test_amz_monitor_first_scan_records_baseline(db_session) -> None:
                 agent_id="amz-monitor",
                 trigger_type="manual",
                 trigger_ref="m6-baseline",
+                input_snapshot={
+                    "watchlist": [
+                        "B00MFMV6S6",
+                        "B001JYN1IE",
+                        "B015LJPJUU",
+                    ]
+                },
             )
         await _drain()
 
@@ -165,6 +172,13 @@ async def test_amz_monitor_detects_anomaly_on_second_scan(db_session) -> None:
                 agent_id="amz-monitor",
                 trigger_type="manual",
                 trigger_ref="m6-baseline",
+                input_snapshot={
+                    "watchlist": [
+                        "B00MFMV6S6",
+                        "B001JYN1IE",
+                        "B015LJPJUU",
+                    ]
+                },
             )
         await _drain()
 
@@ -177,6 +191,13 @@ async def test_amz_monitor_detects_anomaly_on_second_scan(db_session) -> None:
                 agent_id="amz-monitor",
                 trigger_type="manual",
                 trigger_ref="m6-anomaly",
+                input_snapshot={
+                    "watchlist": [
+                        "B00MFMV6S6",
+                        "B001JYN1IE",
+                        "B015LJPJUU",
+                    ]
+                },
             )
         await _drain()
 

@@ -23,11 +23,13 @@ agents:
     schedule_cron: "@every 30m"
     goals:
       anomaly_threshold_pct: 5.0
-      watchlist:
-        - "B00MFMV6S6"
-        - "B001JYN1IE"
-        - "B015LJPJUU"
+      watchlist_strategy: top_opportunities
+      watchlist_params:
+        limit: 20
+        min_profit_dollars: 20.0
+        min_margin_pct: 40.0
     tool_scope:
+      - pricefinder.db.top_opportunities
       - pricefinder.db.lookup_asins
       - pricefinder.lookup_asin
       - memory.search

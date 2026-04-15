@@ -49,18 +49,43 @@ class MonitorState(TypedDict, total=False):
     summary: str
 
 
-def _watchlist(state: MonitorState) -> list[str]:
+async def _resolve_watchlist(state: MonitorState) -> list[str]:
+    """Pick the ASINs to scan this run.
+
+    Priority:
+      1. Trigger payload `watchlist` override (for manual/ad-hoc runs).
+      2. goals.watchlist_strategy == "top_opportunities" → call the
+         pricefinder.db.top_opportunities tool.
+      3. goals.watchlist static list (fallback / back-compat).
+    """
     goals = state.get("goals") or {}
-    watchlist = goals.get("watchlist") or []
-    # Allow the trigger payload to override for one-off manual runs.
     trigger_watchlist = (state.get("input") or {}).get("watchlist")
     if isinstance(trigger_watchlist, list) and trigger_watchlist:
         return list(trigger_watchlist)
-    return list(watchlist)
+
+    strategy = (goals.get("watchlist_strategy") or "static").lower()
+    if strategy == "top_opportunities":
+        params = goals.get("watchlist_params") or {}
+        result = await invoke_from_state(
+            state, "pricefinder.db.top_opportunities", params
+        )
+        if result["status"] != "ok":
+            log.warning(
+                "amz_monitor.watchlist_fetch_failed",
+                status=result["status"],
+                error=result.get("error"),
+            )
+            return []
+        items = (result["data"] or {}).get("items") or []
+        return [
+            item["asin"] for item in items if item.get("asin")
+        ]
+
+    return list(goals.get("watchlist") or [])
 
 
 async def node_scan_watchlist(state: MonitorState) -> dict[str, Any]:
-    asins = _watchlist(state)
+    asins = await _resolve_watchlist(state)
     if not asins:
         return {"observations": []}
 
