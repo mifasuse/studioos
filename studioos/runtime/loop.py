@@ -30,9 +30,18 @@ async def run_forever() -> None:
 
         n = await register_mcp_http_servers()
         if n:
-            log.info("runtime.mcp_tools_registered", count=n)
+            log.info("runtime.mcp_http_tools_registered", count=n)
     except Exception:
-        log.exception("runtime.mcp_register_failed")
+        log.exception("runtime.mcp_http_register_failed")
+
+    try:
+        from studioos.tools.mcp_stdio import register_mcp_stdio_servers
+
+        n = await register_mcp_stdio_servers()
+        if n:
+            log.info("runtime.mcp_stdio_tools_registered", count=n)
+    except Exception:
+        log.exception("runtime.mcp_stdio_register_failed")
 
     stop_event = asyncio.Event()
 
@@ -76,6 +85,12 @@ async def run_forever() -> None:
             scheduler_task,
             return_exceptions=True,
         )
+        try:
+            from studioos.tools.mcp_stdio import shutdown_mcp_stdio_servers
+
+            await shutdown_mcp_stdio_servers()
+        except Exception:
+            log.exception("runtime.mcp_stdio_shutdown_failed")
         log.info("runtime.stopped")
 
 

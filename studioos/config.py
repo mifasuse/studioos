@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     buyboxpricer_username: str = ""
     buyboxpricer_password: str = ""
 
+    # AdsOptimizer (M23)
+    adsoptimizer_db_url: str = ""
+
+    # EbayCrossLister (M23)
+    ebaycrosslister_db_url: str = ""
+
     # Notifications (M11)
     telegram_bot_token: str = ""
     telegram_default_chat_id: str = ""
@@ -103,6 +109,11 @@ class Settings(BaseSettings):
     # Format: comma-separated "prefix=url" entries, e.g.
     #   playwright=https://pw.example/mcp,gh=https://gh.example/mcp
     mcp_http_servers: str = ""
+
+    # MCP stdio tool servers (M23)
+    # Format: comma-separated "prefix=command arg arg" entries, e.g.
+    #   fs=npx -y @modelcontextprotocol/server-filesystem /tmp,git=mcp-git
+    mcp_stdio_servers: str = ""
 
 
 settings = Settings()

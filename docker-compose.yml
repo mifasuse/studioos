@@ -55,6 +55,8 @@ services:
       - default
       - traefik-public
       - buyboxpricer_buyboxpricer-network
+      - adsoptimizer_adsoptimizer-network
+      - ebaycrosslister_ebaycrosslister-network
 
 volumes:
   studioos-pgdata:
@@ -68,4 +70,8 @@ networks:
   traefik-public:
     external: true
   buyboxpricer_buyboxpricer-network:
+    external: true
+  adsoptimizer_adsoptimizer-network:
+    external: true
+  ebaycrosslister_ebaycrosslister-network:
     external: true

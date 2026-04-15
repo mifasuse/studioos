@@ -19,12 +19,16 @@ log = get_logger(__name__)
 
 
 _SERVICES = [
+    # pricefinder + buyboxpricer expose their health under /api so the
+    # public traefik route still works. adsoptimizer + ebaycrosslister
+    # only expose /health on the container port, NOT under /api — so
+    # we hit them on the internal docker network via traefik-public.
     {"name": "pricefinder", "url": "https://pricefinder.mifasuse.com/api/health"},
     {"name": "buyboxpricer", "url": "https://buyboxpricer.mifasuse.com/api/v1/health"},
-    {"name": "adsoptimizer", "url": "https://adsoptimizer.mifasuse.com/api/health"},
+    {"name": "adsoptimizer", "url": "http://adsoptimizer-backend:8000/health"},
     {
         "name": "ebaycrosslister",
-        "url": "https://ebaycrosslister.mifasuse.com/api/health",
+        "url": "http://ebaycrosslister-backend:8000/health",
     },
 ]
 

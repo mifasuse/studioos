@@ -37,8 +37,50 @@ class CrossState(TypedDict, total=False):
 
 
 async def node_scan(state: CrossState) -> dict[str, Any]:
+    """Pull listable items from the EbayCrossLister inventory directly.
+
+    EbayCrossLister already keeps an up-to-date view of which Amazon
+    inventory rows are listed on eBay. That's a stronger signal than
+    PriceFinder's premium calculation, so we use it as the primary
+    source. PriceFinder remains a useful future fallback when ebay
+    inventory data is empty.
+    """
     goals = state.get("goals") or {}
-    result = await invoke_from_state(
+    primary = await invoke_from_state(
+        state,
+        "ebaycrosslister.db.listable_items",
+        {"limit": int(goals.get("scan_limit", 30))},
+    )
+    if primary["status"] == "ok":
+        items = (primary["data"] or {}).get("items") or []
+        # Normalize to a shared shape with the pricefinder fallback.
+        normalized = [
+            {
+                "asin": it.get("asin"),
+                "title": it.get("title"),
+                "brand": None,
+                "amazon_buybox_usd": it.get("amazon_price"),
+                "ebay_new_usd": None,
+                "premium_pct": None,
+                "monthly_sold": None,
+                "fba_offer_count": None,
+                "sales_rank": None,
+                "fulfillable_quantity": it.get("fulfillable_quantity"),
+                "sku": it.get("sku"),
+                "source": "ebaycrosslister",
+            }
+            for it in items
+        ]
+        if normalized:
+            return {"candidates": normalized}
+        # Empty inventory → fall through to pricefinder
+    else:
+        log.warning(
+            "amz_crosslister.ebay_scan_failed",
+            error=primary.get("error"),
+        )
+
+    fallback = await invoke_from_state(
         state,
         "pricefinder.db.crosslist_candidates",
         {
@@ -47,12 +89,15 @@ async def node_scan(state: CrossState) -> dict[str, Any]:
             "min_monthly_sold": int(goals.get("min_monthly_sold", 30)),
         },
     )
-    if result["status"] != "ok":
+    if fallback["status"] != "ok":
         log.warning(
-            "amz_crosslister.scan_failed", error=result.get("error")
+            "amz_crosslister.fallback_failed", error=fallback.get("error")
         )
         return {"candidates": []}
-    return {"candidates": (result["data"] or {}).get("items") or []}
+    items = (fallback["data"] or {}).get("items") or []
+    for it in items:
+        it["source"] = "pricefinder"
+    return {"candidates": items}
 
 
 def node_diff(state: CrossState) -> dict[str, Any]:

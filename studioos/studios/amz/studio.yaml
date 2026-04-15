@@ -204,10 +204,9 @@ agents:
     heartbeat_config: {}
     schedule_cron: "@every 6h"
     goals:
-      scan_limit: 15
-      min_premium: 1.15
-      min_monthly_sold: 30
+      scan_limit: 30
     tool_scope:
+      - ebaycrosslister.db.listable_items
       - pricefinder.db.crosslist_candidates
       - telegram.notify
       - slack.notify
@@ -226,6 +225,7 @@ agents:
       min_rating: 4.0
       max_competitors: 15
     tool_scope:
+      - adsoptimizer.db.list_campaigns
       - pricefinder.db.ad_candidates
       - telegram.notify
       - slack.notify

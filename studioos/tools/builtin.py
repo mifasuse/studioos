@@ -14,8 +14,10 @@ from studioos.db import session_scope
 from studioos.kpi.store import get_current_state
 from studioos.memory.store import search_memory
 
+from . import adsoptimizer as _ado  # noqa: F401  (registers AdsOptimizer tools)
 from . import amz as _amz  # noqa: F401  (registers AMZ tools)
 from . import buyboxpricer as _bbp  # noqa: F401  (registers BBP tools)
+from . import ebaycrosslister as _ebay  # noqa: F401  (registers EbayCrossLister tools)
 from . import llm as _llm  # noqa: F401  (registers llm.chat)
 from . import slack as _slack  # noqa: F401  (registers slack.notify)
 from . import telegram as _telegram  # noqa: F401  (registers telegram.notify)
