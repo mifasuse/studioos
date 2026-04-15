@@ -223,12 +223,22 @@ async def node_ask_llm(state: AnalystState) -> dict[str, Any]:
     }
 
 
+def _f(x: Any) -> float | None:
+    if x is None:
+        return None
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
 def node_decide(state: AnalystState) -> dict[str, Any]:
     anomaly = state.get("anomaly") or {}
     verdict = state.get("verdict") or {}
     decision = verdict.get("verdict", "uncertain")
     confidence = float(verdict.get("confidence", 0.0))
     asin = anomaly.get("asin")
+    kind = state.get("event_kind") or "anomaly"
 
     events: list[dict[str, Any]] = []
     memories: list[dict[str, Any]] = []
@@ -251,10 +261,11 @@ def node_decide(state: AnalystState) -> dict[str, Any]:
                 "payload": {
                     "asin": asin,
                     "marketplace": anomaly.get("marketplace", "US"),
-                    "previous_price": float(anomaly.get("previous_price", 0)),
-                    "current_price": float(anomaly.get("current_price", 0)),
-                    "delta_pct": float(anomaly.get("delta_pct", 0)),
-                    "direction": anomaly.get("direction", "down"),
+                    "previous_price": _f(anomaly.get("previous_price")),
+                    "current_price": _f(anomaly.get("current_price")),
+                    "delta_pct": _f(anomaly.get("delta_pct")),
+                    "direction": anomaly.get("direction"),
+                    "source": kind,
                     "verdict": "accept",
                     "confidence": confidence,
                     "rationale": verdict.get("rationale", ""),
@@ -283,8 +294,9 @@ def node_decide(state: AnalystState) -> dict[str, Any]:
                 "payload": {
                     "asin": asin,
                     "marketplace": anomaly.get("marketplace", "US"),
-                    "delta_pct": float(anomaly.get("delta_pct", 0)),
-                    "direction": anomaly.get("direction", "down"),
+                    "delta_pct": _f(anomaly.get("delta_pct")),
+                    "direction": anomaly.get("direction"),
+                    "source": kind,
                     "verdict": "reject",
                     "confidence": confidence,
                     "rationale": verdict.get("rationale", ""),

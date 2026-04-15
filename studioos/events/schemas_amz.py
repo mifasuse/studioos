@@ -29,14 +29,17 @@ class PriceAnomalyDetectedV1(BaseModel):
 
 
 class OpportunityConfirmedV1(BaseModel):
-    """amz.opportunity.confirmed — analyst endorses an anomaly as actionable."""
+    """amz.opportunity.confirmed — analyst endorses an opportunity."""
 
     asin: str = Field(min_length=10, max_length=10)
     marketplace: str = "US"
-    previous_price: float
-    current_price: float
-    delta_pct: float
-    direction: str
+    # Anomaly fields are optional because confirmed can also come from a
+    # discovery event (no previous_price, no delta) rather than an anomaly.
+    previous_price: float | None = None
+    current_price: float | None = None
+    delta_pct: float | None = None
+    direction: str | None = None
+    source: str = "anomaly"  # "anomaly" | "discovery"
     verdict: str = "accept"
     confidence: float = Field(ge=0, le=1)
     rationale: str
@@ -44,12 +47,13 @@ class OpportunityConfirmedV1(BaseModel):
 
 
 class OpportunityRejectedV1(BaseModel):
-    """amz.opportunity.rejected — analyst dismisses an anomaly as noise."""
+    """amz.opportunity.rejected — analyst dismisses an opportunity as noise."""
 
     asin: str = Field(min_length=10, max_length=10)
     marketplace: str = "US"
-    delta_pct: float
-    direction: str
+    delta_pct: float | None = None
+    direction: str | None = None
+    source: str = "anomaly"
     verdict: str = "reject"
     confidence: float = Field(ge=0, le=1)
     rationale: str
