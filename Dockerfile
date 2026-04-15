@@ -5,7 +5,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     docker.io \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && git config --global --add safe.directory '*'
 
 # uv
 RUN pip install --no-cache-dir uv
