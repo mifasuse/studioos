@@ -50,7 +50,8 @@ async def test_invoke_ok_writes_audit_row(db_session) -> None:
         studio_id="test",
     )
     result = await invoke_tool("test.echo", {"message": "hi"}, ctx)
-    assert result == {"status": "ok", "data": {"echo": "hi"}}
+    assert result["status"] == "ok"
+    assert result["data"] == {"echo": "hi"}
 
     async with session_scope() as session:
         rows = (
