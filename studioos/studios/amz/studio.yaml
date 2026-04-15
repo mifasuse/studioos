@@ -28,6 +28,11 @@ templates:
     display_name: "AMZ Pricer"
     description: "Periodic BuyBoxPricer scan for lost-buybox listings, recommends reprices to Telegram"
     workflow_ref: amz_pricer
+  - id: amz_reflector
+    version: 1
+    display_name: "AMZ Reflector"
+    description: "Daily learning loop — summarises last 24h of activity via MiniMax and sends a morning reflection"
+    workflow_ref: amz_reflector
 agents:
   - id: amz-monitor
     template_id: amz_monitor
@@ -103,6 +108,19 @@ agents:
       underbid_pct: 1.0
     tool_scope:
       - buyboxpricer.db.lost_buybox
+      - telegram.notify
+      - memory.search
+  - id: amz-reflector
+    template_id: amz_reflector
+    template_version: 1
+    display_name: "AMZ Reflector"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "@every 24h"
+    goals:
+      window_hours: 24
+    tool_scope:
+      - llm.chat
       - telegram.notify
       - memory.search
 subscriptions:

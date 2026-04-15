@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import desc, select
 
 from studioos import __version__
@@ -45,6 +46,18 @@ app = FastAPI(
     description="Multi-studio autonomous agent platform",
     lifespan=lifespan,
 )
+
+
+@app.get("/")
+async def root() -> RedirectResponse:
+    return RedirectResponse(url="/dashboard", status_code=302)
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard() -> HTMLResponse:
+    from studioos.api.dashboard import DASHBOARD_HTML
+
+    return HTMLResponse(content=DASHBOARD_HTML)
 
 
 @app.get("/health")
