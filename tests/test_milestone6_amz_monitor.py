@@ -37,20 +37,49 @@ async def _drain(max_iters: int = 15) -> None:
 
 
 def _make_mock_transport(responses: dict[str, float]) -> httpx.MockTransport:
+    """Emulate the PriceFinder OAuth2 + /products search endpoints."""
+
     def handler(request: httpx.Request) -> httpx.Response:
-        asin = request.url.params.get("asin")
-        if asin not in responses:
-            return httpx.Response(404, json={"error": f"unknown asin {asin}"})
-        return httpx.Response(
-            200,
-            json={
-                "asin": asin,
-                "price": responses[asin],
-                "currency": "USD",
-                "buybox": True,
-                "offer_count": 3,
-            },
-        )
+        path = request.url.path
+        if path.endswith("/auth/token"):
+            return httpx.Response(
+                200,
+                json={"access_token": "test-token", "token_type": "bearer"},
+            )
+        if path.endswith("/products/") or path.endswith("/products"):
+            asin = (request.url.params.get("search") or "").upper()
+            price = responses.get(asin)
+            if price is None:
+                return httpx.Response(
+                    200,
+                    json={"items": [], "total": 0, "page": 1, "pages": 0},
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": 999,
+                            "asin": asin,
+                            "title": f"Mock product {asin}",
+                            "brand": "MockBrand",
+                            "us_market_data": {
+                                "buybox_price": str(price),
+                                "amazon_price": None,
+                                "lowest_price": str(price),
+                                "last_update": "2026-04-15T00:00:00+00:00",
+                            },
+                            "us_profit": 10.0,
+                            "us_roi": 20.0,
+                            "us_margin": 15.0,
+                        }
+                    ],
+                    "total": 1,
+                    "page": 1,
+                    "pages": 1,
+                },
+            )
+        return httpx.Response(404, json={"detail": "not mocked"})
 
     return httpx.MockTransport(handler)
 
@@ -62,14 +91,20 @@ def _patch_httpx(transport: httpx.MockTransport):
         kwargs["transport"] = transport
         return real_client(*args, **kwargs)
 
+    # Also reset the cached PF client so each test rebuilds its token cache.
+    import studioos.tools.amz as amz_mod
+
+    amz_mod._client_singleton = None  # type: ignore[attr-defined]
     return patch("studioos.tools.amz.httpx.AsyncClient", factory)
 
 
 @pytest.mark.asyncio
 async def test_amz_monitor_first_scan_records_baseline(db_session) -> None:
-    settings.pricefinder_url = "http://pricefinder.test"
+    settings.pricefinder_url = "http://pricefinder.test/api/v1"
+    settings.pricefinder_username = "test@test"
+    settings.pricefinder_password = "pw"
     transport = _make_mock_transport(
-        {"B08N5WRWNW": 29.99, "B07FZ8S74R": 19.50, "B09G9FPHY6": 149.00}
+        {"B00MFMV6S6": 29.99, "B001JYN1IE": 19.50, "B015LJPJUU": 149.00}
     )
 
     with _patch_httpx(transport):
@@ -130,12 +165,14 @@ async def test_amz_monitor_first_scan_records_baseline(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_amz_monitor_detects_anomaly_on_second_scan(db_session) -> None:
-    settings.pricefinder_url = "http://pricefinder.test"
+    settings.pricefinder_url = "http://pricefinder.test/api/v1"
+    settings.pricefinder_username = "test@test"
+    settings.pricefinder_password = "pw"
 
     # First scan: seed baseline
     with _patch_httpx(
         _make_mock_transport(
-            {"B08N5WRWNW": 29.99, "B07FZ8S74R": 19.50, "B09G9FPHY6": 149.00}
+            {"B00MFMV6S6": 29.99, "B001JYN1IE": 19.50, "B015LJPJUU": 149.00}
         )
     ):
         async with session_scope() as session:
@@ -151,9 +188,9 @@ async def test_amz_monitor_detects_anomaly_on_second_scan(db_session) -> None:
     with _patch_httpx(
         _make_mock_transport(
             {
-                "B08N5WRWNW": 26.99,  # -10%
-                "B07FZ8S74R": 19.50,
-                "B09G9FPHY6": 149.00,
+                "B00MFMV6S6": 26.99,  # -10%
+                "B001JYN1IE": 19.50,
+                "B015LJPJUU": 149.00,
             }
         )
     ):
@@ -197,11 +234,11 @@ async def test_amz_monitor_detects_anomaly_on_second_scan(db_session) -> None:
 
     assert len(anomalies) == 1
     payload = anomalies[0].payload
-    assert payload["asin"] == "B08N5WRWNW"
+    assert payload["asin"] == "B00MFMV6S6"
     assert payload["direction"] == "down"
     assert abs(payload["delta_pct"] + 10.003) < 0.05
 
     assert any("price_anomaly" in (m.tags or []) for m in memories)
-    assert state_row.state["last_prices"]["B08N5WRWNW"] == 26.99
+    assert state_row.state["last_prices"]["B00MFMV6S6"] == 26.99
     assert state_row.state["scans_total"] == 2
     assert state_row.state["anomalies_total"] == 1

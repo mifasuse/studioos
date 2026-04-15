@@ -55,7 +55,9 @@ class Settings(BaseSettings):
 
     # AMZ tool services (M6)
     pricefinder_url: str = ""
-    pricefinder_timeout_seconds: float = 10.0
+    pricefinder_username: str = ""
+    pricefinder_password: str = ""
+    pricefinder_timeout_seconds: float = 15.0
 
 
 settings = Settings()

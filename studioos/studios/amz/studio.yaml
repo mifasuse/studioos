@@ -18,9 +18,9 @@ agents:
     goals:
       anomaly_threshold_pct: 5.0
       watchlist:
-        - "B08N5WRWNW"
-        - "B07FZ8S74R"
-        - "B09G9FPHY6"
+        - "B00MFMV6S6"
+        - "B001JYN1IE"
+        - "B015LJPJUU"
     tool_scope:
       - pricefinder.lookup_asin
       - memory.search
