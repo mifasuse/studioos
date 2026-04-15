@@ -75,6 +75,7 @@ class AnalystState(TypedDict, total=False):
     recent_memories: list[dict[str, Any]]
     kpis: list[dict[str, Any]]
     # populated during run
+    event_kind: str  # "anomaly" | "discovery"
     anomaly: dict[str, Any]
     product: dict[str, Any] | None
     verdict: dict[str, Any]
@@ -88,15 +89,30 @@ class AnalystState(TypedDict, total=False):
 async def node_load_context(state: AnalystState) -> dict[str, Any]:
     event = state.get("input") or {}
     payload = event.get("payload") or {}
-    anomaly = {
-        "asin": payload.get("asin"),
-        "marketplace": payload.get("marketplace", "US"),
-        "previous_price": payload.get("previous_price"),
-        "current_price": payload.get("current_price"),
-        "delta_pct": payload.get("delta_pct"),
-        "direction": payload.get("direction"),
-        "threshold_pct": payload.get("threshold_pct"),
-    }
+    event_type = event.get("event_type") or ""
+
+    if event_type == "amz.opportunity.discovered":
+        kind = "discovery"
+        anomaly = {
+            "asin": payload.get("asin"),
+            "marketplace": payload.get("marketplace", "US"),
+            "previous_price": None,
+            "current_price": payload.get("buybox_price_usd"),
+            "delta_pct": None,
+            "direction": None,
+            "threshold_pct": None,
+        }
+    else:
+        kind = "anomaly"
+        anomaly = {
+            "asin": payload.get("asin"),
+            "marketplace": payload.get("marketplace", "US"),
+            "previous_price": payload.get("previous_price"),
+            "current_price": payload.get("current_price"),
+            "delta_pct": payload.get("delta_pct"),
+            "direction": payload.get("direction"),
+            "threshold_pct": payload.get("threshold_pct"),
+        }
 
     product: dict[str, Any] | None = None
     asin = anomaly.get("asin")
@@ -109,7 +125,7 @@ async def node_load_context(state: AnalystState) -> dict[str, Any]:
             if items:
                 product = items[0]
 
-    return {"anomaly": anomaly, "product": product}
+    return {"event_kind": kind, "anomaly": anomaly, "product": product}
 
 
 def _build_messages(
@@ -118,13 +134,15 @@ def _build_messages(
     anomaly = state.get("anomaly") or {}
     product = state.get("product") or {}
     memories = state.get("recent_memories") or []
+    kind = state.get("event_kind") or "anomaly"
 
     memory_lines = []
     for m in memories[:5]:
         memory_lines.append(f"- {m.get('content', '')[:200]}")
     memory_block = "\n".join(memory_lines) if memory_lines else "(none)"
 
-    user = f"""Anomaly:
+    label = "Newly discovered opportunity" if kind == "discovery" else "Anomaly"
+    user = f"""{label}:
 {json.dumps(anomaly, ensure_ascii=False)}
 
 Product context:

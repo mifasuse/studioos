@@ -74,6 +74,9 @@ class Settings(BaseSettings):
 
     # BuyBoxPricer (M12)
     buyboxpricer_db_url: str = ""
+    buyboxpricer_api_url: str = "https://buyboxpricer.mifasuse.com/api/v1"
+    buyboxpricer_username: str = ""
+    buyboxpricer_password: str = ""
 
     # Notifications (M11)
     telegram_bot_token: str = ""

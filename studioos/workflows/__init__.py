@@ -10,6 +10,7 @@ from studioos.workflows import (  # noqa: F401
     amz_monitor,
     amz_pricer,
     amz_reflector,
+    amz_repricer,
     amz_scout,
     analyst_test,
     scout_test,
@@ -24,4 +25,5 @@ __all__ = [
     "amz_scout",
     "amz_pricer",
     "amz_reflector",
+    "amz_repricer",
 ]

@@ -469,9 +469,11 @@ _SCOUT_SQL = text(
       AND COALESCE(u.rating, 0) >= :min_rating
       AND COALESCE(u.review_count, 0) >= :min_review_count
       AND COALESCE(o.roi_percent, -1) >= :min_roi_pct
-      AND COALESCE(p.tr_price, 0) >= 1
-    ORDER BY o.roi_percent DESC NULLS LAST,
-             o.estimated_profit DESC NULLS LAST
+      AND COALESCE(o.roi_percent, 0) <= :max_roi_pct
+      AND COALESCE(o.estimated_profit, 0) >= :min_profit_dollars
+      AND COALESCE(p.tr_price, 0) >= :min_tr_price
+    ORDER BY o.estimated_profit DESC NULLS LAST,
+             o.profit_margin_percent DESC NULLS LAST
     LIMIT :lim
     """
 )
@@ -490,10 +492,13 @@ _SCOUT_SQL = text(
         "properties": {
             "limit": {"type": "integer"},
             "min_roi_pct": {"type": "number"},
+            "max_roi_pct": {"type": "number"},
             "max_sales_rank": {"type": "integer"},
             "min_monthly_sold": {"type": "integer"},
             "min_rating": {"type": "number"},
             "min_review_count": {"type": "integer"},
+            "min_profit_dollars": {"type": "number"},
+            "min_tr_price": {"type": "number"},
         },
         "additionalProperties": False,
     },
@@ -507,10 +512,13 @@ async def pricefinder_db_scout_candidates(
     params = {
         "lim": int(args.get("limit", 20)),
         "min_roi_pct": float(args.get("min_roi_pct", 20.0)),
+        "max_roi_pct": float(args.get("max_roi_pct", 1000.0)),
         "max_sales_rank": int(args.get("max_sales_rank", 100_000)),
         "min_monthly_sold": int(args.get("min_monthly_sold", 30)),
         "min_rating": float(args.get("min_rating", 3.5)),
         "min_review_count": int(args.get("min_review_count", 10)),
+        "min_profit_dollars": float(args.get("min_profit_dollars", 10.0)),
+        "min_tr_price": float(args.get("min_tr_price", 5.0)),
     }
     engine = _pf_engine()
     async with engine.connect() as conn:

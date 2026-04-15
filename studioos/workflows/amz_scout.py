@@ -49,10 +49,13 @@ def _scout_params(state: ScoutState) -> dict[str, Any]:
     return {
         "limit": int(goals.get("scan_limit", 20)),
         "min_roi_pct": float(goals.get("min_roi_pct", 20.0)),
+        "max_roi_pct": float(goals.get("max_roi_pct", 1000.0)),
         "max_sales_rank": int(goals.get("max_sales_rank", 100_000)),
         "min_monthly_sold": int(goals.get("min_monthly_sold", 30)),
         "min_rating": float(goals.get("min_rating", 3.5)),
         "min_review_count": int(goals.get("min_review_count", 10)),
+        "min_profit_dollars": float(goals.get("min_profit_dollars", 10.0)),
+        "min_tr_price": float(goals.get("min_tr_price", 5.0)),
     }
 
 

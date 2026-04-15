@@ -33,6 +33,11 @@ templates:
     display_name: "AMZ Reflector"
     description: "Daily learning loop — summarises last 24h of activity via MiniMax and sends a morning reflection"
     workflow_ref: amz_reflector
+  - id: amz_repricer
+    version: 1
+    display_name: "AMZ Repricer"
+    description: "Approval-gated executor for reprice recommendations; calls BuyBoxPricer's run-single engine when granted (dry-run by default)"
+    workflow_ref: amz_repricer
 agents:
   - id: amz-monitor
     template_id: amz_monitor
@@ -88,10 +93,13 @@ agents:
     goals:
       scan_limit: 20
       min_roi_pct: 20.0
+      max_roi_pct: 1000.0
       max_sales_rank: 100000
       min_monthly_sold: 30
       min_rating: 3.5
       min_review_count: 10
+      min_profit_dollars: 10.0
+      min_tr_price: 5.0
     tool_scope:
       - pricefinder.db.scout_candidates
       - telegram.notify
@@ -123,10 +131,28 @@ agents:
       - llm.chat
       - telegram.notify
       - memory.search
+  - id: amz-repricer
+    template_id: amz_repricer
+    template_version: 1
+    display_name: "AMZ Repricer"
+    mode: normal
+    heartbeat_config: {}
+    goals:
+      dry_run: true
+    tool_scope:
+      - buyboxpricer.api.run_single_repricing
+      - telegram.notify
+      - memory.search
 subscriptions:
   - subscriber: amz-analyst
     event_pattern: "amz.price.anomaly_detected"
     priority: 30
+  - subscriber: amz-analyst
+    event_pattern: "amz.opportunity.discovered"
+    priority: 40
   - subscriber: amz-executor
     event_pattern: "amz.opportunity.confirmed"
     priority: 20
+  - subscriber: amz-repricer
+    event_pattern: "amz.reprice.recommended"
+    priority: 25

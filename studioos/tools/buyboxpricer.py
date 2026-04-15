@@ -9,15 +9,20 @@ approval gate.
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
+import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from studioos.config import settings
+from studioos.logging import get_logger
 
 from .base import ToolContext, ToolError, ToolResult
 from .registry import register_tool
+
+log = get_logger(__name__)
 
 _engines: dict[int, AsyncEngine] = {}
 
@@ -149,5 +154,100 @@ async def buyboxpricer_db_lost_buybox(
         data={
             "items": items,
             "count": len(items),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Write path — BuyBoxPricer HTTP API
+# ---------------------------------------------------------------------------
+
+
+_token_cache: dict[int, tuple[str, float]] = {}
+_TOKEN_TTL_SECONDS = 60 * 60
+
+
+async def _bbp_token(client: httpx.AsyncClient, *, force: bool = False) -> str:
+    if not settings.buyboxpricer_username or not settings.buyboxpricer_password:
+        raise ToolError(
+            "STUDIOOS_BUYBOXPRICER_USERNAME/PASSWORD are not configured"
+        )
+    key = id(asyncio.get_event_loop())
+    now = time.monotonic()
+    cached = _token_cache.get(key)
+    if not force and cached and (now - cached[1]) < _TOKEN_TTL_SECONDS:
+        return cached[0]
+    resp = await client.post(
+        f"{settings.buyboxpricer_api_url.rstrip('/')}/auth/login",
+        data={
+            "username": settings.buyboxpricer_username,
+            "password": settings.buyboxpricer_password,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    if resp.status_code != 200:
+        raise ToolError(
+            f"buyboxpricer login failed: {resp.status_code} {resp.text[:200]}"
+        )
+    token = resp.json().get("access_token")
+    if not token:
+        raise ToolError("buyboxpricer login response missing access_token")
+    _token_cache[key] = (token, now)
+    return token
+
+
+@register_tool(
+    "buyboxpricer.api.run_single_repricing",
+    description=(
+        "Trigger BuyBoxPricer's own repricing engine for a single listing "
+        "via POST /repricing/run-single/{id}. The engine consults the "
+        "listing's repricing_profile and competitor data and may push a "
+        "new price to Amazon. Authenticated; cost charged per call."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "listing_id": {"type": "integer"},
+        },
+        "required": ["listing_id"],
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="amz",
+    cost_cents=2,
+)
+async def buyboxpricer_api_run_single(
+    args: dict[str, Any], ctx: ToolContext
+) -> ToolResult:
+    listing_id = int(args["listing_id"])
+    base = settings.buyboxpricer_api_url.rstrip("/")
+    url = f"{base}/repricing/run-single/{listing_id}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            token = await _bbp_token(client)
+            resp = await client.post(
+                url, headers={"Authorization": f"Bearer {token}"}
+            )
+            if resp.status_code == 401:
+                token = await _bbp_token(client, force=True)
+                resp = await client.post(
+                    url, headers={"Authorization": f"Bearer {token}"}
+                )
+    except httpx.HTTPError as exc:
+        raise ToolError(f"buyboxpricer http error: {exc}") from exc
+    if resp.status_code >= 400:
+        raise ToolError(
+            f"buyboxpricer {resp.status_code}: {resp.text[:300]}"
+        )
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise ToolError(f"buyboxpricer non-json: {exc}") from exc
+    return ToolResult(
+        data={
+            "listing_id": listing_id,
+            "asin": body.get("asin"),
+            "sku": body.get("sku"),
+            "result": body.get("result"),
         }
     )
