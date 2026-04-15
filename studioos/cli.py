@@ -647,6 +647,164 @@ def schedule_cmd() -> None:
 
 
 @app.command()
+def status() -> None:
+    """One-shot overview: agents, runs, events, budget, approvals."""
+    from datetime import UTC, datetime
+
+    from rich.columns import Columns
+    from rich.panel import Panel
+
+    from studioos.status import build_snapshot
+
+    async def _run() -> None:
+        async with session_scope() as session:
+            snap = await build_snapshot(session)
+
+        # --- Studios + agents ---
+        agents_table = Table(
+            title=f"Agents ({len(snap.agents)})", expand=False
+        )
+        agents_table.add_column("Agent", style="cyan")
+        agents_table.add_column("Studio", style="magenta")
+        agents_table.add_column("Mode")
+        agents_table.add_column("Schedule")
+        agents_table.add_column("Next due")
+        for a in snap.agents:
+            mode_color = (
+                "green" if a.mode == "normal"
+                else "yellow" if a.mode == "degraded"
+                else "red"
+            )
+            if a.schedule_cron is None:
+                next_due = "[dim]—[/dim]"
+            elif a.next_due_seconds is None:
+                next_due = "[red]bad schedule[/red]"
+            elif a.next_due_seconds <= 0:
+                next_due = "[green]now[/green]"
+            else:
+                hrs, rem = divmod(a.next_due_seconds, 3600)
+                mins, secs = divmod(rem, 60)
+                next_due = (
+                    f"{hrs:02d}:{mins:02d}:{secs:02d}"
+                    if hrs
+                    else f"{mins:02d}:{secs:02d}"
+                )
+            agents_table.add_row(
+                a.id,
+                a.studio_id,
+                f"[{mode_color}]{a.mode}[/{mode_color}]",
+                a.schedule_cron or "[dim]—[/dim]",
+                next_due,
+            )
+        console.print(agents_table)
+
+        # --- Run state histogram ---
+        if snap.runs_by_state:
+            rs_line = "  ".join(
+                f"[bold]{k}[/bold]={v}"
+                for k, v in sorted(snap.runs_by_state.items())
+            )
+            failures_line = (
+                f"[red]failures_last_hour={snap.failures_last_hour}[/red]"
+                if snap.failures_last_hour
+                else f"[green]failures_last_hour=0[/green]"
+            )
+            console.print(
+                Panel(
+                    f"{rs_line}\n{failures_line}",
+                    title="Runs",
+                    expand=False,
+                )
+            )
+
+        # --- Recent runs ---
+        runs_table = Table(
+            title=f"Recent runs ({len(snap.recent_runs)})", expand=False
+        )
+        runs_table.add_column("When", style="dim")
+        runs_table.add_column("Agent", style="magenta")
+        runs_table.add_column("State")
+        runs_table.add_column("Trigger", style="dim")
+        runs_table.add_column("Summary / Error")
+        for r in snap.recent_runs:
+            state_color = {
+                "completed": "green",
+                "running": "cyan",
+                "pending": "yellow",
+                "failed": "red",
+                "budget_exceeded": "red",
+                "awaiting_approval": "yellow",
+                "dead": "red",
+                "timed_out": "red",
+            }.get(r.state, "white")
+            body = r.error or r.summary or ""
+            runs_table.add_row(
+                r.created_at.strftime("%H:%M:%S"),
+                r.agent_id,
+                f"[{state_color}]{r.state}[/{state_color}]",
+                r.trigger_type,
+                body[:60],
+            )
+        console.print(runs_table)
+
+        # --- Events last hour ---
+        if snap.event_type_counts_last_hour:
+            ev_table = Table(title="Events (last hour)", expand=False)
+            ev_table.add_column("Type", style="cyan")
+            ev_table.add_column("Count", justify="right")
+            for t, c in sorted(
+                snap.event_type_counts_last_hour.items(),
+                key=lambda x: -x[1],
+            ):
+                ev_table.add_row(t, str(c))
+            console.print(ev_table)
+
+        # --- Tool usage last hour ---
+        if snap.tool_call_counts_last_hour:
+            tool_table = Table(title="Tools (last hour)", expand=False)
+            tool_table.add_column("Tool", style="cyan")
+            tool_table.add_column("Calls", justify="right")
+            for t, c in sorted(
+                snap.tool_call_counts_last_hour.items(),
+                key=lambda x: -x[1],
+            ):
+                tool_table.add_row(t, str(c))
+            tool_table.add_row(
+                "[bold]total spend[/bold]",
+                f"[bold]{snap.tool_cost_cents_last_hour}¢[/bold]",
+            )
+            console.print(tool_table)
+
+        # --- Budgets ---
+        if snap.budgets:
+            b_table = Table(title="Budgets", expand=False)
+            b_table.add_column("Scope", style="cyan")
+            b_table.add_column("Period")
+            b_table.add_column("Spent / Limit", justify="right")
+            b_table.add_column("Remaining", justify="right")
+            for b in snap.budgets:
+                color = "red" if b["over"] else "green"
+                b_table.add_row(
+                    b["scope"],
+                    b["period"],
+                    f"{b['spent_cents']} / {b['limit_cents']}",
+                    f"[{color}]{b['remaining_cents']}[/{color}]",
+                )
+            console.print(b_table)
+
+        # --- Approvals ---
+        ap_color = "yellow" if snap.pending_approvals > 0 else "dim"
+        console.print(
+            f"[{ap_color}]Pending approvals: {snap.pending_approvals}[/{ap_color}]"
+        )
+        console.print(
+            f"[dim]As of {snap.as_of.strftime('%Y-%m-%d %H:%M:%S UTC')}[/dim]"
+        )
+
+    asyncio.run(_run())
+
+
+@app.command()
 def runtime() -> None:
     """Start the runtime loop (scheduler + outbox)."""
     from studioos.runtime.loop import run_forever

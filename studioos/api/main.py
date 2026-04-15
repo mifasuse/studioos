@@ -52,6 +52,52 @@ async def health() -> dict[str, Any]:
     return {"status": "ok", "version": __version__}
 
 
+@app.get("/status")
+async def status() -> dict[str, Any]:
+    from studioos.status import build_snapshot
+
+    async with session_scope() as session:
+        snap = await build_snapshot(session)
+    return {
+        "as_of": snap.as_of.isoformat(),
+        "studios": snap.studios,
+        "agents": [
+            {
+                "id": a.id,
+                "studio_id": a.studio_id,
+                "mode": a.mode,
+                "schedule_cron": a.schedule_cron,
+                "last_scheduled_at": a.last_scheduled_at.isoformat()
+                if a.last_scheduled_at
+                else None,
+                "next_due_seconds": a.next_due_seconds,
+                "tool_scope": a.tool_scope,
+            }
+            for a in snap.agents
+        ],
+        "runs_by_state": snap.runs_by_state,
+        "recent_runs": [
+            {
+                "id": r.id,
+                "agent_id": r.agent_id,
+                "state": r.state,
+                "trigger_type": r.trigger_type,
+                "created_at": r.created_at.isoformat(),
+                "ended_at": r.ended_at.isoformat() if r.ended_at else None,
+                "summary": r.summary,
+                "error": r.error,
+            }
+            for r in snap.recent_runs
+        ],
+        "failures_last_hour": snap.failures_last_hour,
+        "event_type_counts_last_hour": snap.event_type_counts_last_hour,
+        "pending_approvals": snap.pending_approvals,
+        "budgets": snap.budgets,
+        "tool_call_counts_last_hour": snap.tool_call_counts_last_hour,
+        "tool_cost_cents_last_hour": snap.tool_cost_cents_last_hour,
+    }
+
+
 @app.get("/studios")
 async def list_studios() -> list[dict[str, Any]]:
     async with session_scope() as session:
