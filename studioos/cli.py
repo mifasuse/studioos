@@ -581,6 +581,71 @@ def _decide(
     asyncio.run(_run())
 
 
+@app.command("schedule")
+def schedule_cmd() -> None:
+    """List agents with a scheduled cadence + when they last ran."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from studioos.models import Agent
+    from studioos.scheduler.parser import ScheduleError, parse_schedule
+
+    async def _run() -> None:
+        async with session_scope() as session:
+            stmt = (
+                select(Agent)
+                .where(Agent.schedule_cron.is_not(None))
+                .order_by(Agent.id)
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+
+        if not rows:
+            console.print("[dim]No scheduled agents[/dim]")
+            return
+
+        table = Table(title=f"Scheduled agents ({len(rows)})")
+        table.add_column("Agent", style="cyan")
+        table.add_column("Studio", style="magenta")
+        table.add_column("Schedule")
+        table.add_column("Cadence")
+        table.add_column("Last run", style="dim")
+        table.add_column("Next due")
+        now = datetime.now(UTC)
+        for r in rows:
+            try:
+                cadence = parse_schedule(r.schedule_cron or "")
+                cadence_str = str(cadence)
+            except ScheduleError as exc:
+                cadence = None
+                cadence_str = f"[red]{exc}[/red]"
+            last = (
+                r.last_scheduled_at.strftime("%H:%M:%S")
+                if r.last_scheduled_at
+                else "-"
+            )
+            if r.last_scheduled_at is not None and cadence is not None:
+                next_due = r.last_scheduled_at + cadence
+                if next_due <= now:
+                    next_str = "[green]now[/green]"
+                else:
+                    remaining = next_due - now
+                    next_str = str(remaining).split(".")[0]
+            else:
+                next_str = "[green]now[/green]"
+            table.add_row(
+                r.id,
+                r.studio_id,
+                r.schedule_cron or "",
+                cadence_str,
+                last,
+                next_str,
+            )
+        console.print(table)
+
+    asyncio.run(_run())
+
+
 @app.command()
 def runtime() -> None:
     """Start the runtime loop (scheduler + outbox)."""

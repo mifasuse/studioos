@@ -20,6 +20,7 @@ agents:
     display_name: "AMZ Monitor"
     mode: normal
     heartbeat_config: {}
+    schedule_cron: "@every 30m"
     goals:
       anomaly_threshold_pct: 5.0
       watchlist:

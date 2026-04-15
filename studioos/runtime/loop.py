@@ -9,6 +9,7 @@ from studioos.logging import configure_logging, get_logger
 from studioos.runtime.consumer import consumer_loop
 from studioos.runtime.dispatcher import dispatch_loop
 from studioos.runtime.outbox import outbox_loop
+from studioos.scheduler import scheduler_loop
 
 # Ensure workflows + event schemas + tools are imported and registered
 from studioos import workflows  # noqa: F401
@@ -48,6 +49,10 @@ async def run_forever() -> None:
         consumer_loop(stop_event),
         name="consumer",
     )
+    scheduler_task = asyncio.create_task(
+        scheduler_loop(stop_event, settings.agent_scheduler_tick_seconds),
+        name="scheduler",
+    )
 
     try:
         await stop_event.wait()
@@ -57,6 +62,7 @@ async def run_forever() -> None:
             dispatcher_task,
             outbox_task,
             consumer_task,
+            scheduler_task,
             return_exceptions=True,
         )
         log.info("runtime.stopped")

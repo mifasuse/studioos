@@ -103,6 +103,7 @@ async def seed_studio(session: AsyncSession, config: dict[str, Any]) -> None:
                     goals=agent_cfg.get("goals"),
                     tool_scope=agent_cfg.get("tool_scope"),
                     budget_tier=agent_cfg.get("budget_tier"),
+                    schedule_cron=agent_cfg.get("schedule_cron"),
                 )
             )
             await session.flush()
@@ -113,6 +114,8 @@ async def seed_studio(session: AsyncSession, config: dict[str, Any]) -> None:
             existing_agent.goals = agent_cfg.get("goals", existing_agent.goals)
             if "tool_scope" in agent_cfg:
                 existing_agent.tool_scope = agent_cfg.get("tool_scope")
+            if "schedule_cron" in agent_cfg:
+                existing_agent.schedule_cron = agent_cfg.get("schedule_cron")
 
     await session.flush()
 

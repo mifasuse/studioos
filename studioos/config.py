@@ -49,9 +49,10 @@ class Settings(BaseSettings):
     bus_read_block_ms: int = 1000
 
     # Runtime
-    scheduler_tick_seconds: float = 1.0
+    scheduler_tick_seconds: float = 1.0  # dispatcher tick (legacy name)
     outbox_poll_seconds: float = 0.5
     run_timeout_seconds: int = 300
+    agent_scheduler_tick_seconds: float = 15.0  # cadence scheduler tick
 
     # API
     api_host: str = "0.0.0.0"

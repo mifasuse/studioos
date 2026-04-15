@@ -116,6 +116,10 @@ class Agent(Base):
     goals: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     tool_scope: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
     budget_tier: Mapped[str | None] = mapped_column(Text)
+    schedule_cron: Mapped[str | None] = mapped_column(Text)
+    last_scheduled_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True)
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("NOW()")
     )
