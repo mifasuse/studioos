@@ -409,3 +409,40 @@ class KpiSnapshot(Base):
     recorded_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("NOW()")
     )
+
+
+# ---------------------------------------------------------------------------
+# tool_calls (M4)
+# ---------------------------------------------------------------------------
+class ToolCall(Base):
+    __tablename__ = "tool_calls"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ok','error','denied','invalid_args')",
+            name="tool_calls_status_check",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    tool_name: Mapped[str] = mapped_column(Text, nullable=False)
+    agent_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("agents.id")
+    )
+    run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("agent_runs.id")
+    )
+    correlation_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    args: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    duration_ms: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    called_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("NOW()")
+    )

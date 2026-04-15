@@ -22,6 +22,9 @@ agents:
     heartbeat_config: {}
     goals:
       opportunities_per_run: 1
+    tool_scope:
+      - test.echo
+      - memory.search
   - id: test-analyst
     template_id: analyst_test
     template_version: 1
@@ -30,6 +33,8 @@ agents:
     heartbeat_config: {}
     goals:
       acceptance_rate_min: 0.3
+    tool_scope:
+      - kpi.read
 subscriptions:
   - subscriber: test-analyst
     event_pattern: "test.opportunity.detected"

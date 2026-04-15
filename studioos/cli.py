@@ -19,6 +19,7 @@ from studioos.studios import seed_all
 # Workflow imports must happen so they register themselves
 from studioos import workflows  # noqa: F401
 from studioos.events import schemas_test  # noqa: F401
+from studioos.tools import builtin as _builtin_tools  # noqa: F401
 
 app = typer.Typer(help="StudioOS control CLI")
 console = Console()
@@ -338,6 +339,74 @@ def kpi(
                 s.direction,
                 reached,
                 gap_str,
+            )
+        console.print(table)
+
+    asyncio.run(_run())
+
+
+@app.command()
+def tools() -> None:
+    """List registered tools."""
+    from studioos.tools import list_tools
+
+    all_tools = list_tools()
+    if not all_tools:
+        console.print("[dim]No tools registered[/dim]")
+        return
+    table = Table(title=f"Registered tools ({len(all_tools)})")
+    table.add_column("Name", style="cyan")
+    table.add_column("Category", style="magenta")
+    table.add_column("Network", justify="center")
+    table.add_column("Description")
+    for t in all_tools:
+        table.add_row(
+            t.name,
+            t.category,
+            "✓" if t.requires_network else "",
+            t.description[:60],
+        )
+    console.print(table)
+
+
+@app.command("tool-calls")
+def tool_calls_cmd(
+    tool: Annotated[str | None, typer.Option(help="Filter by tool name")] = None,
+    agent: Annotated[str | None, typer.Option(help="Filter by agent_id")] = None,
+    limit: Annotated[int, typer.Option(help="Limit")] = 20,
+) -> None:
+    """Show recent tool invocations."""
+    from sqlalchemy import desc, select
+
+    from studioos.models import ToolCall
+
+    async def _run() -> None:
+        async with session_scope() as session:
+            stmt = (
+                select(ToolCall).order_by(desc(ToolCall.called_at)).limit(limit)
+            )
+            if tool:
+                stmt = stmt.where(ToolCall.tool_name == tool)
+            if agent:
+                stmt = stmt.where(ToolCall.agent_id == agent)
+            rows = (await session.execute(stmt)).scalars().all()
+
+        table = Table(title=f"Tool calls (latest {len(rows)})")
+        table.add_column("When", style="dim")
+        table.add_column("Tool", style="cyan")
+        table.add_column("Agent", style="magenta")
+        table.add_column("Status")
+        table.add_column("ms", justify="right")
+        table.add_column("Error", style="red")
+        for r in rows:
+            status_style = "green" if r.status == "ok" else "yellow"
+            table.add_row(
+                r.called_at.strftime("%H:%M:%S"),
+                r.tool_name,
+                r.agent_id or "",
+                f"[{status_style}]{r.status}[/{status_style}]",
+                str(r.duration_ms),
+                (r.error or "")[:40],
             )
         console.print(table)
 

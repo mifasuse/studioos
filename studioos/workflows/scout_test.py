@@ -19,6 +19,7 @@ from uuid import uuid4
 from langgraph.graph import END, START, StateGraph
 
 from studioos.runtime.workflow_registry import register_workflow
+from studioos.tools import invoke_from_state
 
 
 class ScoutState(TypedDict, total=False):
@@ -44,9 +45,16 @@ class ScoutState(TypedDict, total=False):
     summary: str
 
 
-def node_fetch_data(state: ScoutState) -> dict[str, Any]:
+async def node_fetch_data(state: ScoutState) -> dict[str, Any]:
     scan_id = uuid4().hex[:8]
     value = round(random() * 100, 2)
+    # Exercise the tool pipeline — echoes a marker so the audit row ties
+    # this scan back to its run via the tool_calls table.
+    await invoke_from_state(
+        state,
+        "test.echo",
+        {"message": f"scout-scan:{scan_id}"},
+    )
     return {
         "scan_id": scan_id,
         "mock_data": {

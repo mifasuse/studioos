@@ -18,9 +18,10 @@ from studioos.db import dispose_all, get_engine, session_scope  # noqa: E402
 from studioos.models import Base  # noqa: E402
 from studioos.studios import seed_all  # noqa: E402
 
-# Import workflows + event schemas so they register
-from studioos import workflows  # noqa: F401
-from studioos.events import schemas_test  # noqa: F401
+# Import workflows + event schemas + tools so they register
+from studioos import workflows  # noqa: F401, E402
+from studioos.events import schemas_test  # noqa: F401, E402
+from studioos.tools import builtin as _builtin_tools  # noqa: F401, E402
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -44,6 +45,7 @@ async def db_session(db_setup: None) -> AsyncIterator[None]:
     """Clean transient tables between tests but keep seeded studio config."""
     async with session_scope() as session:
         for table in (
+            "tool_calls",
             "kpi_snapshots",
             "kpi_targets",
             "memory_semantic",

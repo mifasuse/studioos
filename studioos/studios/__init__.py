@@ -111,6 +111,8 @@ async def seed_studio(session: AsyncSession, config: dict[str, Any]) -> None:
         else:
             existing_agent.mode = agent_cfg.get("mode", existing_agent.mode)
             existing_agent.goals = agent_cfg.get("goals", existing_agent.goals)
+            if "tool_scope" in agent_cfg:
+                existing_agent.tool_scope = agent_cfg.get("tool_scope")
 
     await session.flush()
 

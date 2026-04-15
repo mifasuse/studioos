@@ -20,7 +20,11 @@ from studioos.models import (
     KpiSnapshot,
     MemorySemantic,
     Studio,
+    ToolCall,
 )
+from studioos.tools import list_tools
+# Import builtin tools so registry is populated on API startup.
+from studioos.tools import builtin as _builtin_tools  # noqa: F401
 
 log = get_logger(__name__)
 
@@ -254,6 +258,58 @@ async def list_kpi_snapshots(
                 "agent_id": r.agent_id,
                 "source_run_id": str(r.source_run_id) if r.source_run_id else None,
                 "recorded_at": r.recorded_at.isoformat(),
+            }
+            for r in rows
+        ]
+
+
+@app.get("/tools")
+async def list_tools_endpoint() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": t.name,
+            "description": t.description,
+            "category": t.category,
+            "requires_network": t.requires_network,
+            "input_schema": t.input_schema,
+        }
+        for t in list_tools()
+    ]
+
+
+@app.get("/tool-calls")
+async def list_tool_calls(
+    tool_name: str | None = None,
+    agent_id: str | None = None,
+    status: str | None = None,
+    limit: int = Query(default=50, le=500),
+) -> list[dict[str, Any]]:
+    async with session_scope() as session:
+        stmt = (
+            select(ToolCall).order_by(desc(ToolCall.called_at)).limit(limit)
+        )
+        if tool_name:
+            stmt = stmt.where(ToolCall.tool_name == tool_name)
+        if agent_id:
+            stmt = stmt.where(ToolCall.agent_id == agent_id)
+        if status:
+            stmt = stmt.where(ToolCall.status == status)
+        rows = (await session.execute(stmt)).scalars().all()
+        return [
+            {
+                "id": str(r.id),
+                "tool_name": r.tool_name,
+                "agent_id": r.agent_id,
+                "run_id": str(r.run_id) if r.run_id else None,
+                "correlation_id": str(r.correlation_id)
+                if r.correlation_id
+                else None,
+                "args": r.args,
+                "result": r.result,
+                "error": r.error,
+                "status": r.status,
+                "duration_ms": r.duration_ms,
+                "called_at": r.called_at.isoformat(),
             }
             for r in rows
         ]
