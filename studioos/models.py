@@ -151,7 +151,8 @@ class AgentRun(Base):
     __tablename__ = "agent_runs"
     __table_args__ = (
         CheckConstraint(
-            "state IN ('pending','running','completed','failed','timed_out','cancelled','dead')",
+            "state IN ('pending','running','completed','failed','timed_out',"
+            "'cancelled','dead','awaiting_approval','budget_exceeded')",
             name="agent_runs_state_check",
         ),
     )
@@ -443,6 +444,98 @@ class ToolCall(Base):
     duration_ms: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="0"
     )
+    cost_cents: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
     called_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+
+# ---------------------------------------------------------------------------
+# budgets (M5)
+# ---------------------------------------------------------------------------
+class Budget(Base):
+    __tablename__ = "budgets"
+    __table_args__ = (
+        CheckConstraint(
+            "period IN ('day','month')", name="budgets_period_check"
+        ),
+        CheckConstraint(
+            "(studio_id IS NOT NULL) OR (agent_id IS NOT NULL)",
+            name="budgets_scope_check",
+        ),
+        CheckConstraint(
+            "spent_cents >= 0 AND limit_cents >= 0",
+            name="budgets_nonneg_check",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    studio_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("studios.id")
+    )
+    agent_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("agents.id")
+    )
+    period: Mapped[str] = mapped_column(Text, nullable=False)
+    period_start: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
+    period_end: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
+    limit_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    spent_cents: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default="0"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+
+# ---------------------------------------------------------------------------
+# approvals (M5)
+# ---------------------------------------------------------------------------
+class Approval(Base):
+    __tablename__ = "approvals"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('pending','approved','denied','expired')",
+            name="approvals_state_check",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("agent_runs.id"), nullable=False
+    )
+    agent_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("agents.id"), nullable=False
+    )
+    studio_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("studios.id")
+    )
+    correlation_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    state: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="pending"
+    )
+    decided_by: Mapped[str | None] = mapped_column(Text)
+    decision_note: Mapped[str | None] = mapped_column(Text)
+    decided_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True)
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True)
+    )
+    created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("NOW()")
     )

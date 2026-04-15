@@ -6,7 +6,7 @@ from typing import Any
 
 from studioos.logging import get_logger
 
-from .base import Handler, Tool
+from .base import CostFn, Handler, Tool
 
 log = get_logger(__name__)
 
@@ -20,6 +20,8 @@ def register_tool(
     input_schema: dict[str, Any],
     requires_network: bool = False,
     category: str = "general",
+    cost_cents: int = 0,
+    cost_fn: CostFn | None = None,
 ) -> Callable[[Handler], Handler]:
     """Decorator to register a tool handler.
 
@@ -43,6 +45,8 @@ def register_tool(
             handler=handler,
             requires_network=requires_network,
             category=category,
+            cost_cents=cost_cents,
+            cost_fn=cost_fn,
         )
         log.debug("tools.registered", name=name, category=category)
         return handler

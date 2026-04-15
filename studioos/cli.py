@@ -414,6 +414,174 @@ def tool_calls_cmd(
 
 
 @app.command()
+def budget(
+    studio: Annotated[str | None, typer.Option(help="Filter by studio_id")] = None,
+    agent: Annotated[str | None, typer.Option(help="Filter by agent_id")] = None,
+) -> None:
+    """Show current-period budget buckets for a scope."""
+    from studioos.budget import current_budget
+
+    async def _run() -> None:
+        async with session_scope() as session:
+            views = await current_budget(
+                session, agent_id=agent, studio_id=studio
+            )
+        if not views:
+            console.print("[dim]No budget buckets for this scope[/dim]")
+            return
+        table = Table(title="Budgets")
+        table.add_column("Scope", style="cyan")
+        table.add_column("Period")
+        table.add_column("Limit (¢)", justify="right")
+        table.add_column("Spent (¢)", justify="right")
+        table.add_column("Remaining (¢)", justify="right")
+        table.add_column("Over")
+        for v in views:
+            style = "red" if v.over else "green"
+            table.add_row(
+                v.scope,
+                v.period,
+                str(v.limit_cents),
+                str(v.spent_cents),
+                f"[{style}]{v.remaining_cents}[/{style}]",
+                "✗" if v.over else "✓",
+            )
+        console.print(table)
+
+    asyncio.run(_run())
+
+
+@app.command("budget-set")
+def budget_set(
+    limit_cents: Annotated[int, typer.Argument(help="Daily limit in cents")],
+    studio: Annotated[str | None, typer.Option(help="Studio scope")] = None,
+    agent: Annotated[str | None, typer.Option(help="Agent scope")] = None,
+    period: Annotated[str, typer.Option(help="day|month")] = "day",
+) -> None:
+    """Create or update a budget bucket for the current period."""
+    from studioos.budget import ensure_budget
+
+    async def _run() -> None:
+        async with session_scope() as session:
+            row = await ensure_budget(
+                session,
+                limit_cents=limit_cents,
+                period=period,  # type: ignore[arg-type]
+                agent_id=agent,
+                studio_id=studio,
+            )
+        console.print(
+            f"[green]Budget set:[/green] "
+            f"{'agent=' + agent if agent else 'studio=' + (studio or '?')} "
+            f"period={period} limit={limit_cents}¢ (id={row.id})"
+        )
+
+    asyncio.run(_run())
+
+
+@app.command()
+def approvals(
+    state: Annotated[str, typer.Option(help="pending|approved|denied|expired|all")] = "pending",
+    limit: Annotated[int, typer.Option()] = 50,
+) -> None:
+    """List approvals."""
+    from sqlalchemy import desc, select
+
+    from studioos.models import Approval
+
+    async def _run() -> None:
+        async with session_scope() as session:
+            stmt = select(Approval).order_by(desc(Approval.created_at)).limit(limit)
+            if state != "all":
+                stmt = stmt.where(Approval.state == state)
+            rows = (await session.execute(stmt)).scalars().all()
+        table = Table(title=f"Approvals ({state})")
+        table.add_column("ID", style="cyan")
+        table.add_column("Run", style="dim")
+        table.add_column("Agent", style="magenta")
+        table.add_column("State", style="yellow")
+        table.add_column("Reason")
+        table.add_column("Created", style="dim")
+        for r in rows:
+            table.add_row(
+                str(r.id)[:8],
+                str(r.run_id)[:8],
+                r.agent_id,
+                r.state,
+                r.reason[:40],
+                r.created_at.strftime("%H:%M:%S"),
+            )
+        console.print(table)
+
+    asyncio.run(_run())
+
+
+@app.command()
+def approve(
+    approval_id: Annotated[str, typer.Argument(help="Approval id (full or prefix)")],
+    note: Annotated[str | None, typer.Option(help="Decision note")] = None,
+    by: Annotated[str, typer.Option(help="Who is approving")] = "cli",
+) -> None:
+    """Approve a pending approval."""
+    _decide(approval_id, decision="approved", decided_by=by, note=note)
+
+
+@app.command()
+def deny(
+    approval_id: Annotated[str, typer.Argument(help="Approval id (full or prefix)")],
+    note: Annotated[str | None, typer.Option(help="Decision note")] = None,
+    by: Annotated[str, typer.Option(help="Who is denying")] = "cli",
+) -> None:
+    """Deny a pending approval."""
+    _decide(approval_id, decision="denied", decided_by=by, note=note)
+
+
+def _decide(
+    approval_id: str, *, decision: str, decided_by: str, note: str | None
+) -> None:
+    from sqlalchemy import select
+
+    from studioos.approvals import decide_approval
+    from studioos.models import Approval
+
+    async def _run() -> None:
+        async with session_scope() as session:
+            # Allow prefix match
+            rows = (
+                (
+                    await session.execute(
+                        select(Approval).where(Approval.state == "pending")
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            match = [r for r in rows if str(r.id).startswith(approval_id)]
+            if not match:
+                console.print(
+                    f"[red]No pending approval matching {approval_id}[/red]"
+                )
+                return
+            if len(match) > 1:
+                console.print(
+                    f"[red]Ambiguous prefix — {len(match)} matches[/red]"
+                )
+                return
+            row = await decide_approval(
+                session,
+                approval_id=match[0].id,
+                decision=decision,
+                decided_by=decided_by,
+                note=note,
+            )
+        console.print(
+            f"[green]Approval {str(row.id)[:8]} {decision} by {decided_by}[/green]"
+        )
+
+    asyncio.run(_run())
+
+
+@app.command()
 def runtime() -> None:
     """Start the runtime loop (scheduler + outbox)."""
     from studioos.runtime.loop import run_forever

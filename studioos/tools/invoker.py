@@ -11,6 +11,7 @@ from typing import Any
 
 from sqlalchemy import select
 
+from studioos.budget import charge as charge_budget
 from studioos.db import session_scope
 from studioos.logging import get_logger
 from studioos.models import Agent, ToolCall
@@ -52,6 +53,7 @@ async def _record(
     error: str | None,
     status: str,
     duration_ms: int,
+    cost_cents: int = 0,
 ) -> None:
     async with session_scope() as session:
         session.add(
@@ -65,8 +67,16 @@ async def _record(
                 error=error,
                 status=status,
                 duration_ms=duration_ms,
+                cost_cents=cost_cents,
             )
         )
+        if cost_cents > 0 and status == "ok":
+            await charge_budget(
+                session,
+                agent_id=ctx.agent_id,
+                studio_id=ctx.studio_id,
+                cents=cost_cents,
+            )
 
 
 async def invoke_tool(
@@ -147,9 +157,18 @@ async def invoke_tool(
         )
         return {"status": "error", "error": msg}
 
-    log.info("tools.ok", tool=name, duration_ms=duration_ms)
+    cost = tool.cost_cents
+    if tool.cost_fn is not None:
+        try:
+            cost = int(tool.cost_fn(args, data))
+        except Exception:
+            log.exception("tools.cost_fn_failed", tool=name)
+            cost = tool.cost_cents
+
+    log.info("tools.ok", tool=name, duration_ms=duration_ms, cost_cents=cost)
     await _record(
         tool_name=name, ctx=ctx, args=args, result=data,
         error=None, status="ok", duration_ms=duration_ms,
+        cost_cents=cost,
     )
-    return {"status": "ok", "data": data}
+    return {"status": "ok", "data": data, "cost_cents": cost}

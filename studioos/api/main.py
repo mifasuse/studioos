@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from sqlalchemy import desc, select
 
 from studioos import __version__
@@ -16,6 +16,8 @@ from studioos.memory.store import search_memory
 from studioos.models import (
     Agent,
     AgentRun,
+    Approval,
+    Budget,
     Event,
     KpiSnapshot,
     MemorySemantic,
@@ -313,6 +315,96 @@ async def list_tool_calls(
             }
             for r in rows
         ]
+
+
+@app.get("/budgets")
+async def list_budgets(
+    agent_id: str | None = None,
+    studio_id: str | None = None,
+) -> list[dict[str, Any]]:
+    from studioos.budget import current_budget
+
+    async with session_scope() as session:
+        views = await current_budget(
+            session, agent_id=agent_id, studio_id=studio_id
+        )
+    return [
+        {
+            "scope": v.scope,
+            "period": v.period,
+            "limit_cents": v.limit_cents,
+            "spent_cents": v.spent_cents,
+            "remaining_cents": v.remaining_cents,
+            "over": v.over,
+            "period_start": v.period_start.isoformat(),
+            "period_end": v.period_end.isoformat(),
+        }
+        for v in views
+    ]
+
+
+@app.get("/approvals")
+async def list_approvals_endpoint(
+    state: str | None = None,
+    agent_id: str | None = None,
+    limit: int = Query(default=50, le=500),
+) -> list[dict[str, Any]]:
+    async with session_scope() as session:
+        stmt = select(Approval).order_by(desc(Approval.created_at)).limit(limit)
+        if state:
+            stmt = stmt.where(Approval.state == state)
+        if agent_id:
+            stmt = stmt.where(Approval.agent_id == agent_id)
+        rows = (await session.execute(stmt)).scalars().all()
+        return [
+            {
+                "id": str(r.id),
+                "run_id": str(r.run_id),
+                "agent_id": r.agent_id,
+                "studio_id": r.studio_id,
+                "correlation_id": str(r.correlation_id) if r.correlation_id else None,
+                "reason": r.reason,
+                "payload": r.payload,
+                "state": r.state,
+                "decided_by": r.decided_by,
+                "decision_note": r.decision_note,
+                "decided_at": r.decided_at.isoformat() if r.decided_at else None,
+                "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in rows
+        ]
+
+
+@app.post("/approvals/{approval_id}/decide")
+async def decide_approval_endpoint(
+    approval_id: UUID,
+    body: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    from studioos.approvals import decide_approval
+
+    decision = body.get("decision")
+    decided_by = body.get("decided_by") or "api"
+    note = body.get("note")
+    if decision not in ("approved", "denied"):
+        raise HTTPException(400, "decision must be 'approved' or 'denied'")
+    async with session_scope() as session:
+        try:
+            row = await decide_approval(
+                session,
+                approval_id=approval_id,
+                decision=decision,
+                decided_by=decided_by,
+                note=note,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {
+            "id": str(row.id),
+            "state": row.state,
+            "decided_by": row.decided_by,
+            "decided_at": row.decided_at.isoformat() if row.decided_at else None,
+        }
 
 
 def _serialize_event(event: Event) -> dict[str, Any]:

@@ -24,6 +24,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from studioos.approvals import create_approval
 from studioos.events.envelope import EventEnvelope, EventSource
 from studioos.events.registry import registry
 from studioos.kpi.store import get_current_state, record_snapshot
@@ -155,6 +156,7 @@ async def execute_run(session: AsyncSession, run_id: UUID) -> AgentRun:
     events_out: list[dict[str, Any]] = output.get("events", [])
     memories_out: list[dict[str, Any]] = output.get("memories", [])
     kpi_updates_out: list[dict[str, Any]] = output.get("kpi_updates", [])
+    approvals_out: list[dict[str, Any]] = output.get("approvals", [])
 
     run.output_snapshot = {
         "state": new_state,
@@ -226,6 +228,29 @@ async def execute_run(session: AsyncSession, run_id: UUID) -> AgentRun:
         )
         session.add(event_row)
 
+    # If the workflow asked for human approvals, persist them and park the
+    # run. The dispatcher re-enqueues it once every approval is settled.
+    if approvals_out:
+        for appr in approvals_out:
+            await create_approval(
+                session,
+                run_id=run.id,
+                agent_id=agent.id,
+                studio_id=agent.studio_id,
+                correlation_id=run.correlation_id,
+                reason=appr.get("reason", "unspecified"),
+                payload=appr.get("payload"),
+                expires_in_seconds=appr.get("expires_in_seconds"),
+            )
+        run.state = "awaiting_approval"
+        run.ended_at = None
+        log.info(
+            "run.awaiting_approval",
+            approvals_count=len(approvals_out),
+            events_count=len(events_out),
+        )
+        return run
+
     run.state = "completed"
     run.ended_at = datetime.now(UTC)
     log.info(
@@ -233,6 +258,7 @@ async def execute_run(session: AsyncSession, run_id: UUID) -> AgentRun:
         events_count=len(events_out),
         memories_count=len(memories_out),
         kpi_updates_count=len(kpi_updates_out),
+        approvals_count=len(approvals_out),
         summary=output.get("summary"),
     )
     return run

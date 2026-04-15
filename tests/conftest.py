@@ -45,6 +45,8 @@ async def db_session(db_setup: None) -> AsyncIterator[None]:
     """Clean transient tables between tests but keep seeded studio config."""
     async with session_scope() as session:
         for table in (
+            "approvals",
+            "budgets",
             "tool_calls",
             "kpi_snapshots",
             "kpi_targets",

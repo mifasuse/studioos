@@ -32,6 +32,9 @@ class ToolResult:
 Handler = Callable[[dict[str, Any], ToolContext], Awaitable[ToolResult | dict[str, Any]]]
 
 
+CostFn = Callable[[dict[str, Any], ToolResult | dict[str, Any]], int]
+
+
 @dataclass(frozen=True)
 class Tool:
     """A registered tool."""
@@ -42,3 +45,7 @@ class Tool:
     handler: Handler
     requires_network: bool = False
     category: str = "general"
+    # Static cost in integer cents per successful call. For variable cost
+    # tools (LLM, paid APIs) set `cost_fn` to compute from args + result.
+    cost_cents: int = 0
+    cost_fn: CostFn | None = None

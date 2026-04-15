@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from studioos.budget import current_budget
 from studioos.db import session_scope
 from studioos.kpi.store import get_current_state
 from studioos.memory.store import search_memory
@@ -23,6 +24,7 @@ from .registry import register_tool
         "additionalProperties": False,
     },
     category="test",
+    cost_cents=1,
 )
 async def test_echo(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     return ToolResult(data={"echo": args["message"]})
@@ -43,6 +45,7 @@ async def test_echo(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     },
     requires_network=True,
     category="network",
+    cost_cents=2,
 )
 async def http_get_json(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     url = args["url"]
@@ -102,6 +105,38 @@ async def memory_search(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
                     "score": round(1 - r.distance, 4),
                 }
                 for r in results
+            ]
+        }
+    )
+
+
+@register_tool(
+    "budget.check",
+    description="Return current budget buckets (remaining cents) for the agent's scope.",
+    input_schema={
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    },
+    category="budget",
+)
+async def budget_check(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    async with session_scope() as session:
+        views = await current_budget(
+            session, agent_id=ctx.agent_id, studio_id=ctx.studio_id
+        )
+    return ToolResult(
+        data={
+            "budgets": [
+                {
+                    "scope": v.scope,
+                    "period": v.period,
+                    "limit_cents": v.limit_cents,
+                    "spent_cents": v.spent_cents,
+                    "remaining_cents": v.remaining_cents,
+                    "over": v.over,
+                }
+                for v in views
             ]
         }
     )
