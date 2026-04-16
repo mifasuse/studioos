@@ -78,7 +78,8 @@ async def _process_mention(event: dict[str, Any]) -> None:
         return
 
     text = event.get("text", "")
-    agent_id = resolve_agent_from_mention(text)
+    channel = event.get("channel", "")
+    agent_id = resolve_agent_from_mention(text, channel=channel)
     if not agent_id:
         log.debug("slack_events.no_agent", text=text[:100])
         return

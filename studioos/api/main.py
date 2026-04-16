@@ -37,6 +37,12 @@ log = get_logger(__name__)
 async def lifespan(_app: FastAPI):
     configure_logging()
     log.info("api.starting", version=__version__)
+    # Initialize Slack bot user mapping for inbound mention routing
+    try:
+        from studioos.slack_routing import init_bot_user_map
+        await init_bot_user_map()
+    except Exception as exc:
+        log.warning("api.slack_init_failed", error=str(exc))
     yield
     log.info("api.stopped")
 

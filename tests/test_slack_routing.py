@@ -57,17 +57,35 @@ def test_resolve_no_agent(slack_env: None) -> None:
     assert channel == "#amz-hq"
 
 
-from studioos.slack_routing import resolve_agent_from_mention, clean_mention_text, _BOT_USER_MAP
+from studioos.slack_routing import (
+    resolve_agent_from_mention,
+    clean_mention_text,
+    _BOT_USER_MAP,
+    _SINGLE_APP_BOT_UID,
+    _AGENT_SHORT_NAMES,
+)
+import studioos.slack_routing as _sr
 
 
-def test_resolve_agent_from_mention() -> None:
+def test_resolve_multi_app_mode() -> None:
     _BOT_USER_MAP["U0ABC123"] = "amz-pricer"
     _BOT_USER_MAP["U0DEF456"] = "amz-analyst"
     assert resolve_agent_from_mention("<@U0ABC123> check this") == "amz-pricer"
     assert resolve_agent_from_mention("no mention here") is None
     assert resolve_agent_from_mention("<@U9999999> unknown") is None
-    # Cleanup
     _BOT_USER_MAP.clear()
+
+
+def test_resolve_single_app_by_short_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    _sr._SINGLE_APP_BOT_UID = "U_BOT"
+    _sr._AGENT_SHORT_NAMES["pricer"] = "amz-pricer"
+    _sr._AGENT_SHORT_NAMES["ceo"] = "amz-ceo"
+    monkeypatch.setattr(settings, "slack_studio_channels", "amz=C_AMZ,app-studio=C_APP")
+    assert resolve_agent_from_mention("<@U_BOT> pricer stok durumu", channel="C_AMZ") == "amz-pricer"
+    assert resolve_agent_from_mention("<@U_BOT> ceo haftalık brief", channel="C_AMZ") == "amz-ceo"
+    assert resolve_agent_from_mention("<@U_BOT>", channel="C_AMZ") is None  # no agent name
+    _sr._SINGLE_APP_BOT_UID = None
+    _sr._AGENT_SHORT_NAMES.clear()
 
 
 def test_clean_mention_text() -> None:

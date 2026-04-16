@@ -23,6 +23,14 @@ async def run_forever() -> None:
     configure_logging()
     log.info("runtime.starting", env=settings.env)
 
+    # Initialize Slack bot user mapping for inbound mention routing.
+    try:
+        from studioos.slack_routing import init_bot_user_map
+
+        await init_bot_user_map()
+    except Exception:
+        log.warning("runtime.slack_init_failed", exc_info=True)
+
     # Register any MCP HTTP servers configured in the environment.
     # Failure here must not block startup.
     try:
