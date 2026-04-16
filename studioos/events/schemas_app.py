@@ -117,3 +117,13 @@ registry.register("app.build.completed", 1, BuildCompletedV1)
 registry.register("app.build.failed", 1, BuildFailedV1)
 registry.register("app.qa.passed", 1, AppQaPassedV1)
 registry.register("app.qa.failed", 1, AppQaFailedV1)
+
+
+class MarketingReportV1(BaseModel):
+    app_id: str
+    flagged_countries: list[dict] = Field(default_factory=list)
+    campaign_count: int = 0
+    summary: str = ""
+
+
+registry.register("app.marketing.report", 1, MarketingReportV1)
