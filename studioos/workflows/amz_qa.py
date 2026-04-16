@@ -330,9 +330,17 @@ async def node_check(state: QAState) -> dict[str, Any]:
     return {"results": results}
 
 
+def _escape_tg(s: str) -> str:
+    """Escape characters that break Telegram MarkdownV1."""
+    for ch in ("*", "_", "`", "["):
+        s = s.replace(ch, "")
+    return s
+
+
 def _format_report(
     results: list[dict[str, Any]], commit: str | None
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
+    """Return (overall, slack_text, telegram_text)."""
     total = sum(len(r["checks"]) for r in results)
     passed = sum(
         1 for r in results for c in r["checks"] if c.get("ok")
@@ -355,19 +363,21 @@ def _format_report(
         for c in r["checks"]:
             if c.get("ok"):
                 continue
-            err = (c.get("error") or "")[:100]
+            err = _escape_tg((c.get("error") or "")[:100])
             sc = c.get("status_code")
             sc_str = f" [{sc}]" if sc else ""
-            lines.append(f"  ✗ `{c['name']}`{sc_str} — {err}")
+            lines.append(f"  ✗ {c['name']}{sc_str} — {err}")
         for d in r.get("diagnoses") or []:
-            lines.append(f"  💡 _{d['check']}: {d['hint']}_")
+            hint = _escape_tg(d["hint"])
+            lines.append(f"  💡 {d['check']}: {hint}")
         if r.get("log_tail"):
-            tail = r["log_tail"][-400:]
-            lines.append(f"  ```\n{tail}\n```")
+            tail = _escape_tg(r["log_tail"][-300:])
+            lines.append(f"  {tail}")
     if failed:
         lines.append("")
         lines.append("@dev fix gerekli")
-    return overall, "\n".join(lines)
+    text = "\n".join(lines)
+    return overall, text, text
 
 
 async def node_report(state: QAState) -> dict[str, Any]:
@@ -376,14 +386,14 @@ async def node_report(state: QAState) -> dict[str, Any]:
     payload = inp.get("payload") or {}
     commit = payload.get("commit")
 
-    overall, text = _format_report(results, commit)
+    overall, slack_text, tg_text = _format_report(results, commit)
     failed_services = [r["service"] for r in results if not r["ok"]]
 
     notify = await invoke_from_state(
         state,
         "telegram.notify",
         {
-            "text": text,
+            "text": tg_text,
             "parse_mode": "Markdown",
             "disable_web_page_preview": True,
         },
@@ -391,7 +401,7 @@ async def node_report(state: QAState) -> dict[str, Any]:
     slack = await invoke_from_state(
         state,
         "slack.notify",
-        {"text": text, "mrkdwn": True, "unfurl_links": False},
+        {"text": slack_text, "mrkdwn": True, "unfurl_links": False},
     )
 
     state_accum = dict(state.get("state") or {})

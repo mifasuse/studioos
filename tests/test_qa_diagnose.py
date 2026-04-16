@@ -51,11 +51,11 @@ def test_format_report_pass_shape() -> None:
             ],
         }
     ]
-    overall, text = _format_report(results, commit="abc1234")
+    overall, slack, tg = _format_report(results, commit="abc1234")
     assert overall == "PASS"
-    assert "✅" in text
-    assert "abc1234" in text
-    assert "@dev" not in text
+    assert "✅" in slack
+    assert "abc1234" in slack
+    assert "@dev" not in slack
 
 
 def test_format_report_fail_mentions_dev() -> None:
@@ -78,8 +78,8 @@ def test_format_report_fail_mentions_dev() -> None:
             "log_tail": "ERROR celery task crashed",
         }
     ]
-    overall, text = _format_report(results, commit=None)
+    overall, slack, tg = _format_report(results, commit=None)
     assert overall == "FAIL"
-    assert "@dev" in text
-    assert "500" in text
-    assert "celery task crashed" in text
+    assert "@dev" in slack
+    assert "500" in slack
+    assert "celery task crashed" in tg
