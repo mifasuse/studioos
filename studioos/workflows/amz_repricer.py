@@ -98,7 +98,7 @@ def _format_approval_msg(rec: dict[str, Any]) -> str:
     )
 
 
-async def node_decide(state: RepricerState) -> dict[str, Any]:
+def node_decide(state: RepricerState) -> dict[str, Any]:
     rec = state.get("recommendation") or {}
     granted = state.get("already_granted", False)
     goals = state.get("goals") or {}
@@ -109,13 +109,17 @@ async def node_decide(state: RepricerState) -> dict[str, Any]:
         # rerun. Proceed straight to the action node.
         return {"approvals": []}
 
-    # First pass: park the run with an approval row.
+    if not dry_run:
+        # Live mode: no approval gate needed, execute directly.
+        return {"approvals": []}
+
+    # dry_run=True: park the run with an approval row.
     text_blob = _format_approval_msg(rec)
     return {
         "approvals": [
             {
                 "reason": (
-                    f"Repricer would {('DRY-RUN ' if dry_run else '')}{text_blob}"
+                    f"Repricer would DRY-RUN {text_blob}"
                 ),
                 "payload": {
                     "recommendation": rec,
@@ -133,8 +137,8 @@ async def node_act(state: RepricerState) -> dict[str, Any]:
     goals = state.get("goals") or {}
     dry_run = bool(goals.get("dry_run", True))
 
-    # Only act if the approval has been cleared (post-approval rerun).
-    if not granted:
+    # Only act if approved or running live (no approval gate in live mode).
+    if dry_run and not granted:
         return {}
 
     listing_id = rec.get("listing_id")

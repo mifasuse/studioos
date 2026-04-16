@@ -173,7 +173,7 @@ agents:
     mode: normal
     heartbeat_config: {}
     goals:
-      dry_run: true
+      dry_run: false
     tool_scope:
       - buyboxpricer.api.run_single_repricing
       - telegram.notify
