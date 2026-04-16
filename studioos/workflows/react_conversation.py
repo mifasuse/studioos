@@ -8,6 +8,7 @@ Flow:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any, TypedDict
@@ -138,16 +139,17 @@ async def node_load_context(state: ReactState) -> dict[str, Any]:
     # Build system prompt
     system_prompt = build_system_prompt(agent_id, tool_scope)
 
-    # Load recent memories
+    # Load recent memories (skip if hangs — embedder.fake can deadlock)
     memories: list[dict[str, Any]] = []
     try:
-        mem_result = await _invoke_unguarded(
-            state, "memory.search", {"query": user_message, "limit": 5}
+        mem_result = await asyncio.wait_for(
+            _invoke_unguarded(state, "memory.search", {"query": user_message or agent_id, "limit": 5}),
+            timeout=5.0,
         )
         if mem_result.get("status") == "ok":
-            memories = (mem_result.get("data") or {}).get("items", [])
-    except Exception as exc:
-        log.warning("react_conversation.load_context.memory_error", error=str(exc))
+            memories = (mem_result.get("data") or {}).get("results") or (mem_result.get("data") or {}).get("items") or []
+    except (asyncio.TimeoutError, Exception) as exc:
+        log.warning("react_conversation.load_context.memory_skip", error=str(exc)[:100])
 
     # Build initial messages list
     messages: list[dict[str, Any]] = [
