@@ -32,12 +32,16 @@ class CrossState(TypedDict, total=False):
     stranded: list[dict[str, Any]]
     low_stock: list[dict[str, Any]]
     new_finds: list[dict[str, Any]]
+    auto_listed: list[dict[str, Any]]
+    auto_list_failed: list[dict[str, Any]]
     events: list[dict[str, Any]]
     memories: list[dict[str, Any]]
     kpi_updates: list[dict[str, Any]]
     approvals: list[dict[str, Any]]
     summary: str
 
+
+AUTO_LIST_BATCH_MAX = 5
 
 # CROSSLISTER.md pricing (lines 26–30):
 #   ebay_new_price varsa → %5–10 altı
@@ -240,6 +244,66 @@ def node_diff(state: CrossState) -> dict[str, Any]:
     return {"new_finds": new_finds, "state": existing}
 
 
+async def node_auto_list(state: CrossState) -> dict[str, Any]:
+    """Auto-list stranded items on eBay via create_draft + publish_listing."""
+    goals = state.get("goals") or {}
+    if not goals.get("auto_list_stranded"):
+        return {}
+
+    new_finds = state.get("new_finds") or []
+    stranded_items = [it for it in new_finds if it.get("priority") == "stranded"]
+    batch = stranded_items[:AUTO_LIST_BATCH_MAX]
+
+    auto_listed: list[dict[str, Any]] = []
+    auto_list_failed: list[dict[str, Any]] = []
+
+    for item in batch:
+        asin = item.get("asin")
+        sku = item.get("sku")
+        title = item.get("title", "")
+        amazon_price = item.get("amazon_price") or 0.0
+        price = item.get("ebay_target_price") or round(amazon_price * 1.175, 2)
+        quantity = item.get("fulfillable_quantity") or 1
+
+        try:
+            draft_res = await invoke_from_state(
+                state,
+                "ebaycrosslister.api.create_draft",
+                {
+                    "title": title,
+                    "price": price,
+                    "quantity": quantity,
+                    "condition": "new",
+                    "asin": asin,
+                    "sku": sku,
+                },
+            )
+            if draft_res.get("status") != "ok":
+                auto_list_failed.append({"asin": asin, "reason": draft_res.get("error")})
+                continue
+
+            listing_id = (draft_res.get("data") or {}).get("listing_id")
+            if not listing_id:
+                auto_list_failed.append({"asin": asin, "reason": "no listing_id in create_draft response"})
+                continue
+
+            pub_res = await invoke_from_state(
+                state,
+                "ebaycrosslister.api.publish_listing",
+                {"listing_id": listing_id},
+            )
+            if pub_res.get("status") == "ok":
+                auto_listed.append({**item, "listing_id": listing_id})
+            else:
+                auto_list_failed.append({"asin": asin, "reason": pub_res.get("error")})
+
+        except Exception as exc:  # noqa: BLE001
+            log.warning("amz_crosslister.auto_list_error", asin=asin, error=str(exc))
+            auto_list_failed.append({"asin": asin, "reason": str(exc)})
+
+    return {"auto_listed": auto_listed, "auto_list_failed": auto_list_failed}
+
+
 def _format_digest(items: list[dict[str, Any]]) -> str:
     lines = [f"*🛒 AMZ CrossLister — {len(items)} eBay fırsatı*"]
     for c in items[:10]:
@@ -331,6 +395,36 @@ async def node_emit(state: CrossState) -> dict[str, Any]:
             }
         )
 
+    auto_listed = state.get("auto_listed") or []
+    if auto_listed:
+        auto_lines = [f"*🚀 Auto-listed {len(auto_listed)} stranded items on eBay*"]
+        for it in auto_listed[:10]:
+            auto_lines.append(
+                f"• `{it.get('asin')}` — listing #{it.get('listing_id')} @ ${it.get('ebay_target_price', '?')}"
+            )
+        if len(auto_listed) > 10:
+            auto_lines.append(f"_+{len(auto_listed) - 10} more_")
+        auto_text = "\n".join(auto_lines)
+        await invoke_from_state(
+            state,
+            "telegram.notify",
+            {
+                "text": auto_text,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True,
+            },
+        )
+        memories.append(
+            {
+                "content": (
+                    f"CrossLister auto-listed {len(auto_listed)} stranded items on eBay; "
+                    f"first ASIN: {auto_listed[0].get('asin')}"
+                ),
+                "tags": ["amz", "crosslister", "ebay", "auto_list"],
+                "importance": 0.7,
+            }
+        )
+
     kpi_updates.append(
         {"name": "crosslist_new_per_run", "value": len(new_finds)}
     )
@@ -358,11 +452,13 @@ def build_graph() -> Any:
     graph.add_node("scan", node_scan)
     graph.add_node("scan_rules", node_scan_rules)
     graph.add_node("diff", node_diff)
+    graph.add_node("auto_list", node_auto_list)
     graph.add_node("emit", node_emit)
     graph.add_edge(START, "scan")
     graph.add_edge("scan", "scan_rules")
     graph.add_edge("scan_rules", "diff")
-    graph.add_edge("diff", "emit")
+    graph.add_edge("diff", "auto_list")
+    graph.add_edge("auto_list", "emit")
     graph.add_edge("emit", END)
     return graph.compile()
 

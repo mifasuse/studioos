@@ -217,10 +217,13 @@ agents:
     schedule_cron: "@every 6h"
     goals:
       scan_limit: 30
+      auto_list_stranded: true
     tool_scope:
       - ebaycrosslister.db.listable_items
       - ebaycrosslister.db.stranded_inventory
       - ebaycrosslister.db.low_stock_listings
+      - ebaycrosslister.api.create_draft
+      - ebaycrosslister.api.publish_listing
       - pricefinder.db.crosslist_candidates
       - telegram.notify
       - slack.notify
