@@ -67,3 +67,39 @@ def clean_mention_text(text: str) -> str:
 def get_bot_user_id(agent_id: str) -> str | None:
     """Get the Slack user_id for an agent (for self-mention detection)."""
     return _AGENT_BOT_MAP.get(agent_id)
+
+
+# Cascade protection
+_THREAD_MENTION_COUNTS: dict[str, int] = {}  # "thread_ts:agent_id" → count
+MAX_MENTIONS_PER_THREAD = 3
+MAX_THREAD_DEPTH = 10
+
+
+def check_cascade(thread_ts: str, agent_id: str, responding_agent_id: str | None = None) -> bool:
+    """Return True if this mention should be processed (not cascade-blocked)."""
+    # Self-mention: agent can't trigger itself
+    if responding_agent_id and responding_agent_id == agent_id:
+        return False
+    # Per-agent-per-thread limit
+    key = f"{thread_ts}:{agent_id}"
+    count = _THREAD_MENTION_COUNTS.get(key, 0)
+    if count >= MAX_MENTIONS_PER_THREAD:
+        return False
+    _THREAD_MENTION_COUNTS[key] = count + 1
+    return True
+
+
+def reset_cascade_counts() -> None:
+    """Clear cascade counters (called periodically or on thread close)."""
+    _THREAD_MENTION_COUNTS.clear()
+
+
+def detect_mentions_in_response(text: str, responding_agent_id: str) -> list[str]:
+    """Find @mentions in an agent's response text. Returns list of agent_ids to trigger."""
+    mentioned: list[str] = []
+    for match in re.finditer(r"<@(U[A-Z0-9]+)>", text):
+        uid = match.group(1)
+        target = _BOT_USER_MAP.get(uid)
+        if target and target != responding_agent_id:
+            mentioned.append(target)
+    return mentioned

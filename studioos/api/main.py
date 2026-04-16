@@ -28,6 +28,7 @@ from studioos.models import (
 from studioos.tools import list_tools
 # Import builtin tools so registry is populated on API startup.
 from studioos.tools import builtin as _builtin_tools  # noqa: F401
+from studioos.api.slack_events import router as slack_router
 
 log = get_logger(__name__)
 
@@ -46,6 +47,7 @@ app = FastAPI(
     description="Multi-studio autonomous agent platform",
     lifespan=lifespan,
 )
+app.include_router(slack_router)
 
 
 @app.get("/")
