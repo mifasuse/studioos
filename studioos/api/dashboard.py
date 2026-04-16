@@ -262,7 +262,47 @@ DASHBOARD_HTML = """<!doctype html>
         <tbody id="budgets"></tbody>
       </table>
     </section>
+
+    <section class="card span-12">
+      <h2>KPIs</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th style="text-align:right;">Current</th>
+            <th style="text-align:right;">Target</th>
+            <th>Direction</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="kpis"></tbody>
+      </table>
+    </section>
+
+    <section class="card span-12">
+      <h2>Pending Approvals</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>Reason</th>
+            <th>Created</th>
+            <th>Expires</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="approvals-list"></tbody>
+      </table>
+    </section>
   </main>
+
+  <div id="run-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:100;overflow-y:auto;" onclick="if(event.target===this)this.style.display='none'">
+    <div style="max-width:720px;margin:60px auto;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:24px;">
+      <h3 style="margin-top:0;">Run Detail</h3>
+      <pre id="run-detail" style="white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:60vh;overflow-y:auto;background:var(--panel-2);padding:12px;border-radius:4px;"></pre>
+      <button onclick="document.getElementById('run-modal').style.display='none'" style="margin-top:12px;padding:6px 16px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);border-radius:4px;cursor:pointer;">Close</button>
+    </div>
+  </div>
 
   <div class="footer">
     Auto-refresh every 15s · <span id="version"></span>
@@ -340,9 +380,9 @@ async function refresh() {
       </tr>
     `).join("");
 
-    // Recent runs
+    // Recent runs (clickable for detail)
     document.getElementById("recent-runs").innerHTML = (d.recent_runs || []).map(r => `
-      <tr>
+      <tr style="cursor:pointer;" onclick="showRunDetail('${r.id}')">
         <td class="muted">${tsLocal(r.created_at)}</td>
         <td class="agent-id">${escape(r.agent_id)}</td>
         <td><span class="state-${r.state}">${escape(r.state)}</span></td>
@@ -378,11 +418,75 @@ async function refresh() {
       `;
     }).join("") || '<tr><td colspan="4" class="empty">no budgets configured</td></tr>';
 
+    // KPIs
+    try {
+      const kr = await fetch("/kpi?studio_id=amz");
+      if (kr.ok) {
+        const kpis = await kr.json();
+        document.getElementById("kpis").innerHTML = kpis.map(k => {
+          const cur = k.current != null ? Number(k.current).toFixed(1) : "—";
+          const tgt = k.target != null ? Number(k.target).toFixed(1) : "—";
+          const reached = k.gap ? k.gap.reached : null;
+          const icon = reached == null ? "—" : reached ? "✅" : "⚠️";
+          return `<tr>
+            <td>${escape(k.name)}</td>
+            <td style="text-align:right;">${cur}${k.unit ? escape(k.unit) : ""}</td>
+            <td style="text-align:right;">${tgt}${k.unit ? escape(k.unit) : ""}</td>
+            <td class="muted">${escape(k.direction || "")}</td>
+            <td>${icon}</td>
+          </tr>`;
+        }).join("") || '<tr><td colspan="5" class="empty">no KPIs</td></tr>';
+      }
+    } catch(e) { console.warn("kpi fetch:", e); }
+
+    // Approvals
+    try {
+      const ar = await fetch("/approvals?state=pending&limit=20");
+      if (ar.ok) {
+        const approvals = await ar.json();
+        document.getElementById("approvals-list").innerHTML = approvals.map(a => {
+          const reason = escape((a.reason || "").substring(0, 120));
+          return `<tr>
+            <td class="agent-id">${escape(a.agent_id || a.run_agent_id || "")}</td>
+            <td class="truncate" style="max-width:400px;" title="${escape(a.reason)}">${reason}</td>
+            <td class="muted">${tsLocal(a.created_at)}</td>
+            <td class="muted">${tsLocal(a.expires_at)}</td>
+            <td>
+              <button onclick="decideApproval('${a.id}','approved')" style="padding:2px 8px;background:var(--green);color:#000;border:none;border-radius:3px;cursor:pointer;font-size:11px;">Approve</button>
+              <button onclick="decideApproval('${a.id}','denied')" style="padding:2px 8px;background:var(--red);color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;margin-left:4px;">Deny</button>
+            </td>
+          </tr>`;
+        }).join("") || '<tr><td colspan="5" class="empty">no pending approvals</td></tr>';
+      }
+    } catch(e) { console.warn("approvals fetch:", e); }
+
   } catch (err) {
     document.getElementById("health").textContent = "ERROR";
     document.getElementById("health").style.color = "var(--red)";
     console.error(err);
   }
+}
+
+async function decideApproval(id, decision) {
+  try {
+    const r = await fetch(`/approvals/${id}/decide`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({decision}),
+    });
+    if (!r.ok) { alert(`Failed: ${r.status}`); return; }
+    refresh();
+  } catch(e) { alert(e); }
+}
+
+async function showRunDetail(runId) {
+  try {
+    const r = await fetch(`/runs/${runId}`);
+    if (!r.ok) { alert(`Run not found: ${r.status}`); return; }
+    const data = await r.json();
+    document.getElementById("run-detail").textContent = JSON.stringify(data, null, 2);
+    document.getElementById("run-modal").style.display = "block";
+  } catch(e) { alert(e); }
 }
 
 refresh();
