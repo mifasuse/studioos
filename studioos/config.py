@@ -123,6 +123,8 @@ class Settings(BaseSettings):
     slack_agent_tokens: str = ""
     # Format: "agent_id=#channel,agent_id2=#channel"  (channel may be ID or name)
     slack_agent_channels: str = ""
+    # Slack inbound (M32)
+    slack_signing_secret: str = ""
 
     # MCP HTTP tool servers (M21)
     # Format: comma-separated "prefix=url" entries, e.g.

@@ -13,7 +13,7 @@ from studioos.scheduler import scheduler_loop
 
 # Ensure workflows + event schemas + tools are imported and registered
 from studioos import workflows  # noqa: F401
-from studioos.events import schemas_amz, schemas_app, schemas_test  # noqa: F401
+from studioos.events import schemas_amz, schemas_app, schemas_slack, schemas_test  # noqa: F401
 from studioos.tools import builtin as _builtin_tools  # noqa: F401
 
 log = get_logger(__name__)
