@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import Body, FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import desc, select
 
 from studioos import __version__
@@ -192,6 +192,62 @@ async def status() -> dict[str, Any]:
         "tool_call_counts_last_hour": snap.tool_call_counts_last_hour,
         "tool_cost_cents_last_hour": snap.tool_cost_cents_last_hour,
     }
+
+
+@app.get("/metrics")
+async def prometheus_metrics() -> Response:
+    """Prometheus exposition format — scraped by the monitoring stack."""
+    from studioos.status import build_snapshot
+
+    async with session_scope() as session:
+        snap = await build_snapshot(session)
+
+    lines: list[str] = []
+
+    # Run state counters
+    lines.append("# HELP studioos_runs_by_state Current count of runs by state")
+    lines.append("# TYPE studioos_runs_by_state gauge")
+    for state, count in (snap.runs_by_state or {}).items():
+        lines.append(f'studioos_runs_by_state{{state="{state}"}} {count}')
+
+    # Failures
+    lines.append("# HELP studioos_failures_last_hour Failures in last 60m")
+    lines.append("# TYPE studioos_failures_last_hour gauge")
+    lines.append(f"studioos_failures_last_hour {snap.failures_last_hour}")
+
+    # Pending approvals
+    lines.append("# HELP studioos_pending_approvals Pending approval count")
+    lines.append("# TYPE studioos_pending_approvals gauge")
+    lines.append(f"studioos_pending_approvals {snap.pending_approvals}")
+
+    # Events per type last hour
+    lines.append("# HELP studioos_events_last_hour Events by type last hour")
+    lines.append("# TYPE studioos_events_last_hour gauge")
+    for etype, count in (snap.event_type_counts_last_hour or {}).items():
+        lines.append(f'studioos_events_last_hour{{event_type="{etype}"}} {count}')
+
+    # Tool calls last hour
+    lines.append("# HELP studioos_tool_calls_last_hour Tool calls by name last hour")
+    lines.append("# TYPE studioos_tool_calls_last_hour gauge")
+    for tool, count in (snap.tool_call_counts_last_hour or {}).items():
+        lines.append(f'studioos_tool_calls_last_hour{{tool="{tool}"}} {count}')
+
+    # Tool cost
+    lines.append("# HELP studioos_tool_cost_cents_last_hour Tool cost in cents last hour")
+    lines.append("# TYPE studioos_tool_cost_cents_last_hour gauge")
+    lines.append(f"studioos_tool_cost_cents_last_hour {snap.tool_cost_cents_last_hour}")
+
+    # Agent mode + next due
+    lines.append("# HELP studioos_agent_next_due_seconds Seconds until next scheduled run")
+    lines.append("# TYPE studioos_agent_next_due_seconds gauge")
+    for a in snap.agents:
+        if a.next_due_seconds is not None:
+            lines.append(
+                f'studioos_agent_next_due_seconds{{agent_id="{a.id}",mode="{a.mode}"}} {a.next_due_seconds}'
+            )
+
+    body = "\n".join(lines) + "\n"
+    return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 @app.get("/studios")
