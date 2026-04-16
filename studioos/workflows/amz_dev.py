@@ -141,20 +141,12 @@ async def node_collect(state: DevState) -> dict[str, Any]:
     }
 
 
-def node_seed_tech_map(state: DevState) -> dict[str, Any]:
-    """Seed tech-map memories on first run only.
-
-    We tag each memory with `amz:dev:tech_map` so the reflector can
-    surface them later. A state flag prevents re-seeding.
-    """
-    state_accum = dict(state.get("state") or {})
+def _seed_tech_map_if_needed(state: DevState) -> list[dict[str, Any]]:
+    """Return tech-map memories if not yet seeded (first run only)."""
+    state_accum = state.get("state") or {}
     if state_accum.get("tech_map_seeded"):
-        return {}
-    state_accum["tech_map_seeded"] = True
-    return {
-        "memories": tech_map_memories(),
-        "state": state_accum,
-    }
+        return []
+    return tech_map_memories()
 
 
 async def node_report(state: DevState) -> dict[str, Any]:
@@ -222,6 +214,11 @@ async def node_report(state: DevState) -> dict[str, Any]:
     state_accum = dict(state.get("state") or {})
     state_accum["pulses_total"] = int(state_accum.get("pulses_total", 0)) + 1
 
+    # Seed tech-map memories on first run.
+    extra_mems = _seed_tech_map_if_needed(state)
+    if extra_mems:
+        state_accum["tech_map_seeded"] = True
+
     return {
         "memories": [
             {
@@ -230,7 +227,8 @@ async def node_report(state: DevState) -> dict[str, Any]:
                 ),
                 "tags": ["amz", "dev", "pulse"],
                 "importance": 0.6 if failures else 0.2,
-            }
+            },
+            *extra_mems,
         ],
         "kpi_updates": [
             {"name": "dev_failures_last_60m", "value": len(failures)}
@@ -249,11 +247,9 @@ async def node_report(state: DevState) -> dict[str, Any]:
 
 def build_graph() -> Any:
     graph = StateGraph(DevState)
-    graph.add_node("seed_tech_map", node_seed_tech_map)
     graph.add_node("collect", node_collect)
     graph.add_node("report", node_report)
-    graph.add_edge(START, "seed_tech_map")
-    graph.add_edge("seed_tech_map", "collect")
+    graph.add_edge(START, "collect")
     graph.add_edge("collect", "report")
     graph.add_edge("report", END)
     return graph.compile()

@@ -204,6 +204,7 @@ agents:
     tool_scope:
       - http.get_json
       - http.post_json
+      - http.post_form
       - telegram.notify
       - slack.notify
       - memory.search

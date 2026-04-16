@@ -39,20 +39,20 @@ def _svc(
     base: str,
     username: str,
     password: str,
-    health_path: str,
+    health_url: str,
     login_path: str,
     endpoints: list[str],
-    log_path: str,
+    log_url: str,
 ) -> dict[str, Any]:
     return {
         "name": name,
         "base": base.rstrip("/"),
         "username": username,
         "password": password,
-        "health_path": health_path,
+        "health_url": health_url,
         "login_path": login_path,
         "endpoints": endpoints,
-        "log_path": log_path,
+        "log_url": log_url,
     }
 
 
@@ -67,40 +67,40 @@ def _services() -> list[dict[str, Any]]:
             base="http://pricefinder-backend:8000/api/v1",
             username=settings.pricefinder_username,
             password=settings.pricefinder_password,
-            health_path="/health",
+            health_url="http://pricefinder-backend:8000/api/health",
             login_path="/auth/login",
             endpoints=["/products/?limit=1", "/opportunities/?limit=1"],
-            log_path="/scrapers/logs/celery?lines=50&search=error",
+            log_url="http://pricefinder-backend:8000/api/v1/scrapers/logs/celery?lines=50&search=error",
         ),
         _svc(
             name="buyboxpricer",
-            base=settings.buyboxpricer_api_url.rstrip("/"),
+            base="http://buyboxpricer-backend:8000/api/v1",
             username=settings.buyboxpricer_username,
             password=settings.buyboxpricer_password,
-            health_path="/health",
+            health_url="http://buyboxpricer-backend:8000/api/v1/health",
             login_path="/auth/login",
             endpoints=["/listings/?limit=1", "/competitors/?limit=1"],
-            log_path="/logs/celery?lines=50&search=error",
+            log_url="http://buyboxpricer-backend:8000/api/v1/logs/celery?lines=50&search=error",
         ),
         _svc(
             name="adsoptimizer",
-            base=settings.adsoptimizer_api_url.rstrip("/"),
+            base="http://adsoptimizer-backend:8000/api/v1",
             username=settings.adsoptimizer_username,
             password=settings.adsoptimizer_password,
-            health_path="/health",
+            health_url="http://adsoptimizer-backend:8000/health",
             login_path="/auth/login",
             endpoints=["/campaigns/?limit=1", "/accounts/"],
-            log_path="/logs/celery?lines=50&search=error",
+            log_url="http://adsoptimizer-backend:8000/api/v1/logs/celery?lines=50&search=error",
         ),
         _svc(
             name="ebaycrosslister",
-            base=settings.ebaycrosslister_api_url.rstrip("/"),
+            base="http://ebaycrosslister-backend:8000/api/v1",
             username=settings.ebaycrosslister_username,
             password=settings.ebaycrosslister_password,
-            health_path="/health",
+            health_url="http://ebaycrosslister-backend:8000/health",
             login_path="/auth/login",
             endpoints=["/amazon/inventory?limit=1", "/listings/?limit=1"],
-            log_path="/logs/celery?lines=50&search=error",
+            log_url="http://ebaycrosslister-backend:8000/api/v1/logs/celery?lines=50&search=error",
         ),
     ]
 
@@ -185,7 +185,7 @@ async def _check_service(
     token: str | None = None
 
     # 1. Health ping
-    health_url = svc["base"] + svc["health_path"]
+    health_url = svc["health_url"]
     h = await _http_get(state, health_url)
     health_ok = h["status"] == "ok"
     health_status = (
@@ -207,12 +207,21 @@ async def _check_service(
         return {"service": svc["name"], "checks": checks, "token": None}
 
     # 2. Auth (only if we have creds)
+    # FastAPI OAuth2PasswordRequestForm expects form-encoded
+    # fields named "username" and "password".
     if svc["username"] and svc["password"]:
         login_url = svc["base"] + svc["login_path"]
-        a = await _http_post(
+        a = await invoke_from_state(
             state,
-            login_url,
-            {"email": svc["username"], "password": svc["password"]},
+            "http.post_form",
+            {
+                "url": login_url,
+                "data": {
+                    "username": svc["username"],
+                    "password": svc["password"],
+                },
+                "timeout_seconds": 8,
+            },
         )
         auth_ok = a["status"] == "ok"
         token = ((a.get("data") or {}).get("body") or {}).get("access_token") if auth_ok else None
@@ -266,7 +275,7 @@ async def _check_service(
 async def _fetch_log_tail(
     state: QAState, svc: dict[str, Any], token: str | None
 ) -> str | None:
-    url = svc["base"] + svc["log_path"]
+    url = svc["log_url"]
     r = await _http_get(state, url, token=token, timeout=12.0)
     if r["status"] != "ok":
         return None
