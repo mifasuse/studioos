@@ -43,6 +43,8 @@ def _svc(
     login_path: str,
     endpoints: list[str],
     log_url: str,
+    login_format: str = "json",
+    login_user_key: str = "email",
 ) -> dict[str, Any]:
     return {
         "name": name,
@@ -53,6 +55,8 @@ def _svc(
         "login_path": login_path,
         "endpoints": endpoints,
         "log_url": log_url,
+        "login_format": login_format,
+        "login_user_key": login_user_key,
     }
 
 
@@ -68,9 +72,11 @@ def _services() -> list[dict[str, Any]]:
             username=settings.pricefinder_username,
             password=settings.pricefinder_password,
             health_url="http://pricefinder-backend:8000/api/health",
-            login_path="/auth/login",
+            login_path="/auth/token",
             endpoints=["/products/?limit=1", "/opportunities/?limit=1"],
             log_url="http://pricefinder-backend:8000/api/v1/scrapers/logs/celery?lines=50&search=error",
+            login_format="form",
+            login_user_key="username",
         ),
         _svc(
             name="buyboxpricer",
@@ -81,6 +87,8 @@ def _services() -> list[dict[str, Any]]:
             login_path="/auth/login",
             endpoints=["/listings/?limit=1", "/competitors/?limit=1"],
             log_url="http://buyboxpricer-backend:8000/api/v1/logs/celery?lines=50&search=error",
+            login_format="form",
+            login_user_key="username",
         ),
         _svc(
             name="adsoptimizer",
@@ -91,6 +99,8 @@ def _services() -> list[dict[str, Any]]:
             login_path="/auth/login",
             endpoints=["/campaigns/?limit=1", "/accounts/"],
             log_url="http://adsoptimizer-backend:8000/api/v1/logs/celery?lines=50&search=error",
+            login_format="form",
+            login_user_key="username",
         ),
         _svc(
             name="ebaycrosslister",
@@ -101,6 +111,8 @@ def _services() -> list[dict[str, Any]]:
             login_path="/auth/login",
             endpoints=["/amazon/inventory?limit=1", "/listings/?limit=1"],
             log_url="http://ebaycrosslister-backend:8000/api/v1/logs/celery?lines=50&search=error",
+            login_format="form",
+            login_user_key="username",
         ),
     ]
 
@@ -207,22 +219,25 @@ async def _check_service(
         return {"service": svc["name"], "checks": checks, "token": None}
 
     # 2. Auth (only if we have creds)
-    # FastAPI OAuth2PasswordRequestForm expects form-encoded
-    # fields named "username" and "password".
     if svc["username"] and svc["password"]:
         login_url = svc["base"] + svc["login_path"]
-        a = await invoke_from_state(
-            state,
-            "http.post_form",
-            {
-                "url": login_url,
-                "data": {
-                    "username": svc["username"],
-                    "password": svc["password"],
+        user_key = svc.get("login_user_key", "email")
+        if svc.get("login_format") == "form":
+            a = await invoke_from_state(
+                state,
+                "http.post_form",
+                {
+                    "url": login_url,
+                    "data": {user_key: svc["username"], "password": svc["password"]},
+                    "timeout_seconds": 8,
                 },
-                "timeout_seconds": 8,
-            },
-        )
+            )
+        else:
+            a = await _http_post(
+                state,
+                login_url,
+                {user_key: svc["username"], "password": svc["password"]},
+            )
         auth_ok = a["status"] == "ok"
         token = ((a.get("data") or {}).get("body") or {}).get("access_token") if auth_ok else None
         checks.append(

@@ -154,9 +154,11 @@ async def http_post_form(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     timeout = float(args.get("timeout_seconds", 10))
     headers = args.get("headers") or {}
     form_data = args.get("data") or {}
+    merged_headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    merged_headers.update(headers)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, data=form_data, headers=headers)
+            resp = await client.post(url, data=form_data, headers=merged_headers)
     except httpx.HTTPError as exc:
         raise ToolError(f"http error: {exc}") from exc
     if resp.status_code >= 400:
