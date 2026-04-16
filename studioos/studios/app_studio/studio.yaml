@@ -28,6 +28,16 @@ templates:
     display_name: "App Studio QA"
     description: "Health check agent — Hub API overview, failure rate, PASS/FAIL verdict"
     workflow_ref: app_studio_qa
+  - id: app_studio_marketing
+    version: 1
+    display_name: "Marketing"
+    description: "Daily campaign monitoring + country ROI analysis"
+    workflow_ref: app_studio_marketing
+  - id: app_studio_hub_dev
+    version: 1
+    display_name: "Hub Dev"
+    description: "Hub service health pulse"
+    workflow_ref: app_studio_hub_dev
   - id: app_studio_growth_intel
     version: 1
     display_name: "Growth Intelligence"
@@ -181,6 +191,37 @@ agents:
       failure_rate_threshold: 20.0
     tool_scope:
       - hub.api.overview
+      - telegram.notify
+      - slack.notify
+      - memory.search
+  - id: app-studio-marketing
+    template_id: app_studio_marketing
+    template_version: 1
+    display_name: "Marketing"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "@every 24h"
+    goals:
+      tracked_apps: [quit_smoking, sms_forward]
+      min_roi: 0
+    tool_scope:
+      - hub.api.campaigns
+      - hub.api.metrics
+      - slack.notify
+      - telegram.notify
+      - memory.search
+  - id: app-studio-hub-dev
+    template_id: app_studio_hub_dev
+    template_version: 1
+    display_name: "Hub Dev"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "@every 6h"
+    goals:
+      repos: []
+    tool_scope:
+      - exec.git_status
+      - exec.git_log
       - telegram.notify
       - slack.notify
       - memory.search

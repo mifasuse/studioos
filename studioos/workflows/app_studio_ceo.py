@@ -76,6 +76,8 @@ _VALID_TARGETS = {
     "app-studio-pricing",
     "app-studio-dev",
     "app-studio-qa",
+    "app-studio-marketing",
+    "app-studio-hub-dev",
 }
 
 APP_STUDIO_KPI_TARGETS = [
