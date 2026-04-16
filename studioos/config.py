@@ -123,6 +123,9 @@ class Settings(BaseSettings):
     slack_agent_tokens: str = ""
     # Format: "agent_id=#channel,agent_id2=#channel"  (channel may be ID or name)
     slack_agent_channels: str = ""
+    # Studio → channel mapping (single-app mode, M32)
+    # Format: "studio_id=CHANNEL_ID,studio_id2=CHANNEL_ID2"
+    slack_studio_channels: str = ""
     # Slack inbound (M32)
     slack_signing_secret: str = ""
 

@@ -39,21 +39,38 @@ def _resolve_slack_route(agent_id: str | None) -> tuple[str, str]:
     """Return (token, channel) for the calling agent.
 
     Priority:
-      1. Per-agent token from STUDIOOS_SLACK_AGENT_TOKENS
-      2. Default bot token from STUDIOOS_SLACK_BOT_TOKEN
-    Channel resolution mirrors the same pattern.
+      1. Per-agent token from STUDIOOS_SLACK_AGENT_TOKENS (legacy multi-token)
+      2. Default bot token from STUDIOOS_SLACK_BOT_TOKEN (single-app mode)
+    Channel:
+      1. Per-agent channel from STUDIOOS_SLACK_AGENT_CHANNELS
+      2. Studio-based default from STUDIOOS_SLACK_STUDIO_CHANNELS
+      3. STUDIOOS_SLACK_DEFAULT_CHANNEL fallback
     """
     token_map = _parse_map(settings.slack_agent_tokens)
     channel_map = _parse_map(settings.slack_agent_channels)
+    studio_channel_map = _parse_map(
+        getattr(settings, "slack_studio_channels", "")
+    )
     token = (
         (token_map.get(agent_id) if agent_id else None)
         or settings.slack_bot_token
     )
-    channel = (
-        (channel_map.get(agent_id) if agent_id else None)
-        or settings.slack_default_channel
-    )
+    # Channel: per-agent → per-studio → default
+    channel = (channel_map.get(agent_id) if agent_id else None)
+    if not channel and agent_id:
+        if agent_id.startswith("amz-"):
+            channel = studio_channel_map.get("amz")
+        elif agent_id.startswith("app-studio-"):
+            channel = studio_channel_map.get("app-studio")
+    channel = channel or settings.slack_default_channel
     return token, channel
+
+
+def _agent_display_name(agent_id: str | None) -> str | None:
+    """Human-friendly display name for chat.postMessage username override."""
+    if not agent_id:
+        return None
+    return agent_id.replace("-", " ").title()
 
 
 @register_tool(
@@ -99,6 +116,11 @@ async def slack_notify(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         "text": args["text"][:40000],
         "mrkdwn": bool(args.get("mrkdwn", True)),
     }
+    # Agent display name (single-app mode: all agents share one bot,
+    # username override shows which agent is speaking)
+    display_name = _agent_display_name(ctx.agent_id)
+    if display_name:
+        body["username"] = display_name
     if args.get("thread_ts"):
         body["thread_ts"] = args["thread_ts"]
     if args.get("unfurl_links") is not None:
