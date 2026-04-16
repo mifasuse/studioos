@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     ebaycrosslister_username: str = ""
     ebaycrosslister_password: str = ""
 
+    # Hub API (M29 — App Studio growth loop)
+    hub_api_url: str = "https://hub.mifasuse.com/api"
+    hub_api_key: str = ""
+
     # Notifications (M11)
     telegram_bot_token: str = ""
     telegram_default_chat_id: str = ""

@@ -1,6 +1,6 @@
 id: app-studio
 display_name: "App Studio"
-mission: "Mobile app portfolio: monitor metrics across the published apps, surface anomalies, and (in future phases) drive pricing/marketing experiments via approval gates."
+mission: "Mobile app portfolio: monitor metrics across the published apps, surface anomalies, and drive pricing/marketing experiments via approval gates."
 status: active
 templates:
   - id: app_studio_pulse
@@ -18,6 +18,26 @@ templates:
     display_name: "Memory Pruner"
     description: "Weekly memory garbage collection"
     workflow_ref: studio_pruner
+  - id: app_studio_growth_intel
+    version: 1
+    display_name: "Growth Intelligence"
+    description: "Weekly funnel report + anomaly detection + product discovery"
+    workflow_ref: app_studio_growth_intel
+  - id: app_studio_growth_exec
+    version: 1
+    display_name: "Growth Execution"
+    description: "Experiment design and launch — Fast Lane vs CEO Lane"
+    workflow_ref: app_studio_growth_exec
+  - id: app_studio_ceo
+    version: 1
+    display_name: "App Studio CEO"
+    description: "Weekly strategic decisions, KPI tracking, task delegation"
+    workflow_ref: app_studio_ceo
+  - id: app_studio_pricing
+    version: 1
+    display_name: "Pricing"
+    description: "Country-based pricing analysis and A/B test planning"
+    workflow_ref: app_studio_pricing
 agents:
   - id: app-studio-pulse
     template_id: app_studio_pulse
@@ -27,7 +47,7 @@ agents:
     heartbeat_config: {}
     schedule_cron: "@every 24h"
     goals:
-      tracked_apps: []
+      tracked_apps: [quit_smoking, sms_forward]
     tool_scope:
       - telegram.notify
       - memory.search
@@ -60,4 +80,80 @@ agents:
     tool_scope:
       - telegram.notify
       - memory.search
-subscriptions: []
+  - id: app-studio-growth-intel
+    template_id: app_studio_growth_intel
+    template_version: 1
+    display_name: "Growth Intelligence"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "0 8 * * 1"
+    goals:
+      tracked_apps: [quit_smoking, sms_forward]
+      anomaly_thresholds:
+        min_roi: 1.0
+        max_churn_rate: 15.0
+        min_retention_d7: 20.0
+        max_mrr_drop_pct: 20.0
+    tool_scope:
+      - hub.api.overview
+      - hub.api.metrics
+      - llm.chat
+      - slack.notify
+      - telegram.notify
+      - memory.search
+  - id: app-studio-growth-exec
+    template_id: app_studio_growth_exec
+    template_version: 1
+    display_name: "Growth Execution"
+    mode: normal
+    heartbeat_config: {}
+    goals: {}
+    tool_scope:
+      - llm.chat
+      - slack.notify
+      - telegram.notify
+      - memory.search
+  - id: app-studio-ceo
+    template_id: app_studio_ceo
+    template_version: 1
+    display_name: "App Studio CEO"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "0 9 * * 1"
+    goals:
+      tracked_apps: [quit_smoking, sms_forward]
+    tool_scope:
+      - hub.api.overview
+      - hub.api.metrics
+      - llm.chat
+      - slack.notify
+      - telegram.notify
+      - memory.search
+      - kpi.read
+  - id: app-studio-pricing
+    template_id: app_studio_pricing
+    template_version: 1
+    display_name: "Pricing"
+    mode: normal
+    heartbeat_config: {}
+    goals: {}
+    tool_scope:
+      - hub.api.overview
+      - hub.api.metrics
+      - llm.chat
+      - slack.notify
+      - telegram.notify
+      - memory.search
+subscriptions:
+  - subscriber: app-studio-growth-exec
+    event_pattern: "app.growth.weekly_report"
+    priority: 30
+  - subscriber: app-studio-growth-exec
+    event_pattern: "app.task.growth_exec"
+    priority: 20
+  - subscriber: app-studio-pricing
+    event_pattern: "app.task.pricing"
+    priority: 20
+  - subscriber: app-studio-growth-intel
+    event_pattern: "app.task.growth_intel"
+    priority: 20
