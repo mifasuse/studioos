@@ -311,6 +311,69 @@ async def _ebay_token(client: httpx.AsyncClient, *, force: bool = False) -> str:
 
 
 @register_tool(
+    "ebaycrosslister.api.create_draft",
+    description=(
+        "Create a draft eBay listing via POST /listings/. "
+        "Requires title, price, quantity. Returns the new listing_id. "
+        "Authenticated; must publish separately to go live."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "price": {"type": "number"},
+            "quantity": {"type": "integer"},
+            "condition": {"type": "string"},
+            "asin": {"type": "string"},
+            "sku": {"type": "string"},
+        },
+        "required": ["title", "price"],
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="amz",
+    cost_cents=2,
+)
+async def ebaycrosslister_api_create_draft(
+    args: dict[str, Any], ctx: ToolContext
+) -> ToolResult:
+    base = settings.ebaycrosslister_api_url.rstrip("/")
+    url = f"{base}/listings/"
+    body = {
+        "title": args["title"],
+        "price": float(args["price"]),
+        "quantity": int(args.get("quantity", 1)),
+        "condition": args.get("condition", "new"),
+    }
+    if args.get("asin"):
+        body["asin"] = args["asin"]
+    if args.get("sku"):
+        body["sku"] = args["sku"]
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            token = await _ebay_token(client)
+            resp = await client.post(
+                url, json=body, headers={"Authorization": f"Bearer {token}"},
+            )
+            if resp.status_code == 401:
+                token = await _ebay_token(client, force=True)
+                resp = await client.post(
+                    url, json=body, headers={"Authorization": f"Bearer {token}"},
+                )
+    except httpx.HTTPError as exc:
+        raise ToolError(f"ebaycrosslister http error: {exc}") from exc
+    if resp.status_code >= 400:
+        raise ToolError(f"ebaycrosslister {resp.status_code}: {resp.text[:300]}")
+    try:
+        result = resp.json()
+    except ValueError as exc:
+        raise ToolError(f"ebaycrosslister non-json: {exc}") from exc
+    return ToolResult(
+        data={"listing_id": result.get("id"), "status": "draft", "result": result}
+    )
+
+
+@register_tool(
     "ebaycrosslister.api.publish_listing",
     description=(
         "Publish a draft eBay listing via POST /listings/{id}/publish. "
