@@ -144,6 +144,7 @@ async def execute_run(session: AsyncSession, run_id: UUID) -> AgentRun:
         "input": run.input_snapshot or {},
         "config": agent.heartbeat_config or {},
         "goals": agent.goals or {},
+        "tool_scope": list(agent.tool_scope or []),
         "recent_memories": recent_memories,
         "kpis": kpi_state,
     }

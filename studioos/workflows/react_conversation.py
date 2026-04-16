@@ -131,25 +131,9 @@ async def node_load_context(state: ReactState) -> dict[str, Any]:
         thread_ts = payload.get("thread_ts", "")
         channel = payload.get("channel", "")
 
-    # Load agent from DB to get tool_scope
+    # tool_scope is injected by the runner from agent.tool_scope (no DB query needed)
     agent_id = state.get("agent_id", "")
-    tool_scope: list[str] = []
-    try:
-        from studioos.db import session_scope
-        from studioos.models import Agent
-        from sqlalchemy import select
-
-        async with session_scope() as session:
-            result = await session.execute(
-                select(Agent).where(Agent.id == agent_id)
-            )
-            agent = result.scalar_one_or_none()
-            if agent and agent.tool_scope:
-                tool_scope = list(agent.tool_scope)
-    except Exception as exc:
-        log.warning("react_conversation.load_context.db_error", error=str(exc))
-        # Fall back to empty scope — still functional for unauthenticated tests
-        tool_scope = []
+    tool_scope = list(state.get("tool_scope") or [])
 
     # Build system prompt
     system_prompt = build_system_prompt(agent_id, tool_scope)
