@@ -87,8 +87,8 @@ def _services() -> list[dict[str, Any]]:
             login_path="/auth/login",
             endpoints=["/listings/?limit=1", "/competitors/?limit=1"],
             log_url="http://buyboxpricer-backend:8000/api/v1/logs/celery?lines=50&search=error",
-            login_format="form",
-            login_user_key="username",
+            login_format="json",
+            login_user_key="email",
         ),
         _svc(
             name="adsoptimizer",
@@ -99,8 +99,8 @@ def _services() -> list[dict[str, Any]]:
             login_path="/auth/login",
             endpoints=["/campaigns/?limit=1", "/accounts/"],
             log_url="http://adsoptimizer-backend:8000/api/v1/logs/celery?lines=50&search=error",
-            login_format="form",
-            login_user_key="username",
+            login_format="json",
+            login_user_key="email",
         ),
         _svc(
             name="ebaycrosslister",
@@ -111,8 +111,8 @@ def _services() -> list[dict[str, Any]]:
             login_path="/auth/login",
             endpoints=["/amazon/inventory?limit=1", "/listings/?limit=1"],
             log_url="http://ebaycrosslister-backend:8000/api/v1/logs/celery?lines=50&search=error",
-            login_format="form",
-            login_user_key="username",
+            login_format="json",
+            login_user_key="email",
         ),
     ]
 
