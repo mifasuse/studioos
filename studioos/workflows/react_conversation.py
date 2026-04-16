@@ -117,18 +117,19 @@ def parse_llm_response(text: str) -> dict[str, Any]:
 
 async def node_load_context(state: ReactState) -> dict[str, Any]:
     """Extract user message, load tool_scope from DB, build system prompt, load memories."""
-    payload = state.get("input") or {}
+    inp = state.get("input") or {}
+    payload = inp.get("payload") or inp  # nested payload or flat
 
     # Determine user message — slack_mention has "text", plain events may differ
     trigger_type = state.get("trigger_type", "")
     if trigger_type == "slack_mention":
         user_message = payload.get("text", "")
-        thread_ts = payload.get("thread_ts")
-        channel = payload.get("channel")
+        thread_ts = payload.get("thread_ts", "")
+        channel = payload.get("channel", "")
     else:
-        user_message = payload.get("text", payload.get("message", ""))
-        thread_ts = payload.get("thread_ts")
-        channel = payload.get("channel")
+        user_message = payload.get("text") or payload.get("description") or payload.get("title") or ""
+        thread_ts = payload.get("thread_ts", "")
+        channel = payload.get("channel", "")
 
     # Load agent from DB to get tool_scope
     agent_id = state.get("agent_id", "")
