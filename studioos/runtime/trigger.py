@@ -14,8 +14,18 @@ async def trigger_run(
     trigger_ref: str = "",
     input_data: dict[str, Any] | None = None,
     priority: int = 30,
+    workflow_override: str | None = None,
 ) -> str:
-    """Create a pending run for an agent. Returns the run_id."""
+    """Create a pending run for an agent. Returns the run_id.
+
+    If workflow_override is set, the runner will use that workflow
+    instead of the agent's default template (e.g. "react_conversation"
+    for Slack mentions).
+    """
+    if workflow_override and input_data is not None:
+        input_data = {**input_data, "_workflow_override": workflow_override}
+    elif workflow_override:
+        input_data = {"_workflow_override": workflow_override}
     async with session_scope() as session:
         run = await create_pending_run(
             session,

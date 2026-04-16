@@ -118,4 +118,5 @@ async def _process_mention(event: dict[str, Any]) -> None:
                 "message_ts": message_ts,
             },
         },
+        workflow_override="react_conversation",
     )

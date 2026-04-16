@@ -74,7 +74,13 @@ async def execute_run(session: AsyncSession, run_id: UUID) -> AgentRun:
         template_version=agent.template_version,
     )
 
-    workflow = resolve_workflow(agent.template_id, agent.template_version)
+    # Check for workflow override (e.g. react_conversation for Slack mentions)
+    override = (run.input_snapshot or {}).get("_workflow_override")
+    if override:
+        workflow = resolve_workflow(override, 1)
+        log.info("run.workflow_override", override=override)
+    else:
+        workflow = resolve_workflow(agent.template_id, agent.template_version)
 
     # Pre-load context: recent memories + current KPI state
     recent_memories: list[dict[str, Any]] = []
