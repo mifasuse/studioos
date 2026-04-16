@@ -17,6 +17,8 @@ from langgraph.graph import END, START, StateGraph
 from studioos.logging import get_logger
 from studioos.runtime.workflow_registry import register_workflow
 from studioos.tools import invoke_from_state
+from studioos.tools.workflow_helper import context_from_state
+from studioos.tools.invoker import invoke_tool
 from studioos.workflows.personas import build_system_prompt
 
 log = get_logger(__name__)
@@ -26,6 +28,20 @@ log = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 MAX_ITERATIONS = 5
+
+# Infrastructure tools the ReAct workflow needs regardless of agent's
+# tool_scope. These bypass the per-agent allow-list enforcement.
+_INFRA_TOOLS = {"llm.chat", "memory.search", "slack.notify", "telegram.notify"}
+
+
+async def _invoke_unguarded(state: dict, name: str, args: dict) -> dict:
+    """Call a tool bypassing the agent's tool_scope enforcement.
+
+    Used for infrastructure calls (LLM, memory, notifications) that
+    the ReAct workflow itself needs, not the agent's domain tools.
+    """
+    ctx = context_from_state(state)
+    return await invoke_tool(name, args, ctx, enforce_allow_list=False)
 
 # ---------------------------------------------------------------------------
 # State
@@ -140,7 +156,7 @@ async def node_load_context(state: ReactState) -> dict[str, Any]:
     # Load recent memories
     memories: list[dict[str, Any]] = []
     try:
-        mem_result = await invoke_from_state(
+        mem_result = await _invoke_unguarded(
             state, "memory.search", {"query": user_message, "limit": 5}
         )
         if mem_result.get("status") == "ok":
@@ -188,7 +204,7 @@ async def node_think(state: ReactState) -> dict[str, Any]:
 
     # Call LLM
     try:
-        llm_result = await invoke_from_state(
+        llm_result = await _invoke_unguarded(
             state, "llm.chat", {"messages": messages}
         )
         if llm_result.get("status") != "ok":
@@ -314,12 +330,12 @@ async def node_format_response(state: ReactState) -> dict[str, Any]:
                 notify_args["channel"] = channel
             if thread_ts:
                 notify_args["thread_ts"] = thread_ts
-            await invoke_from_state(state, "slack.notify", notify_args)
+            await _invoke_unguarded(state, "slack.notify", notify_args)
         except Exception as exc:
             log.warning("react_conversation.format_response.slack_error", error=str(exc))
     else:
         try:
-            await invoke_from_state(state, "telegram.notify", {"text": final_response})
+            await _invoke_unguarded(state, "telegram.notify", {"text": final_response})
         except Exception as exc:
             log.warning(
                 "react_conversation.format_response.telegram_error", error=str(exc)
