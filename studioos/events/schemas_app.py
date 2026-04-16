@@ -75,3 +75,45 @@ registry.register("app.pricing.recommendation", 1, PricingRecommendationV1)
 registry.register("app.task.growth_intel", 1, AppTaskV1)
 registry.register("app.task.pricing", 1, AppTaskV1)
 registry.register("app.task.growth_exec", 1, AppTaskV1)
+registry.register("app.task.dev", 1, AppTaskV1)
+registry.register("app.task.qa", 1, AppTaskV1)
+
+
+class BuildCompletedV1(BaseModel):
+    """app.build.completed — dev reports successful build."""
+    app_id: str
+    repo: str = ""
+    commit_sha: str = ""
+    build_status: str = "success"
+    summary: str = ""
+
+
+class BuildFailedV1(BaseModel):
+    """app.build.failed — dev reports build failure."""
+    app_id: str
+    repo: str = ""
+    error: str = ""
+    commit_sha: str = ""
+
+
+class AppQaPassedV1(BaseModel):
+    """app.qa.passed — QA approves."""
+    app_id: str
+    checks_passed: int = 0
+    checks_total: int = 0
+    summary: str = ""
+
+
+class AppQaFailedV1(BaseModel):
+    """app.qa.failed — QA rejects."""
+    app_id: str
+    checks_passed: int = 0
+    checks_total: int = 0
+    failed_checks: list[str] = Field(default_factory=list)
+    summary: str = ""
+
+
+registry.register("app.build.completed", 1, BuildCompletedV1)
+registry.register("app.build.failed", 1, BuildFailedV1)
+registry.register("app.qa.passed", 1, AppQaPassedV1)
+registry.register("app.qa.failed", 1, AppQaFailedV1)

@@ -18,6 +18,16 @@ templates:
     display_name: "Memory Pruner"
     description: "Weekly memory garbage collection"
     workflow_ref: studio_pruner
+  - id: app_studio_dev
+    version: 1
+    display_name: "App Studio Dev"
+    description: "Hourly build pulse — git status, failure count, Slack report"
+    workflow_ref: app_studio_dev
+  - id: app_studio_qa
+    version: 1
+    display_name: "App Studio QA"
+    description: "Health check agent — Hub API overview, failure rate, PASS/FAIL verdict"
+    workflow_ref: app_studio_qa
   - id: app_studio_growth_intel
     version: 1
     display_name: "Growth Intelligence"
@@ -144,6 +154,36 @@ agents:
       - slack.notify
       - telegram.notify
       - memory.search
+  - id: app-studio-dev
+    template_id: app_studio_dev
+    template_version: 1
+    display_name: "App Studio Dev"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "@every 1h"
+    goals:
+      repos: []
+    tool_scope:
+      - exec.git_status
+      - exec.git_log
+      - telegram.notify
+      - slack.notify
+      - memory.search
+  - id: app-studio-qa
+    template_id: app_studio_qa
+    template_version: 1
+    display_name: "App Studio QA"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "@every 6h"
+    goals:
+      tracked_apps: [quit_smoking, sms_forward]
+      failure_rate_threshold: 20.0
+    tool_scope:
+      - hub.api.overview
+      - telegram.notify
+      - slack.notify
+      - memory.search
 subscriptions:
   - subscriber: app-studio-growth-exec
     event_pattern: "app.growth.weekly_report"
@@ -156,4 +196,10 @@ subscriptions:
     priority: 20
   - subscriber: app-studio-growth-intel
     event_pattern: "app.task.growth_intel"
+    priority: 20
+  - subscriber: app-studio-dev
+    event_pattern: "app.task.dev"
+    priority: 20
+  - subscriber: app-studio-qa
+    event_pattern: "app.task.qa"
     priority: 20

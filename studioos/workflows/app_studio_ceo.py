@@ -74,6 +74,8 @@ _VALID_TARGETS = {
     "app-studio-growth-intel",
     "app-studio-growth-exec",
     "app-studio-pricing",
+    "app-studio-dev",
+    "app-studio-qa",
 }
 
 APP_STUDIO_KPI_TARGETS = [
