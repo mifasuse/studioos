@@ -119,7 +119,14 @@ async def seed_studio(session: AsyncSession, config: dict[str, Any]) -> None:
 
     await session.flush()
 
-    # Subscriptions
+    # Subscriptions — sync from YAML (add new, delete removed)
+    yaml_subs = {
+        (sub["subscriber"], sub["event_pattern"])
+        for sub in config.get("subscriptions", [])
+    }
+    # Get all agent IDs in this studio to scope deletion
+    studio_agent_ids = {a["id"] for a in config.get("agents", [])}
+
     for sub in config.get("subscriptions", []):
         existing_sub = (
             await session.execute(
@@ -145,6 +152,25 @@ async def seed_studio(session: AsyncSession, config: dict[str, Any]) -> None:
                 subscriber=sub["subscriber"],
                 pattern=sub["event_pattern"],
             )
+
+    # Delete subscriptions that are in DB but not in YAML (for this studio's agents)
+    if studio_agent_ids:
+        db_subs = (
+            await session.execute(
+                select(Subscription).where(
+                    Subscription.subscriber_id.in_(studio_agent_ids)
+                )
+            )
+        ).scalars().all()
+        for db_sub in db_subs:
+            key = (db_sub.subscriber_id, db_sub.event_pattern)
+            if key not in yaml_subs:
+                await session.delete(db_sub)
+                log.info(
+                    "seed.subscription_deleted",
+                    subscriber=db_sub.subscriber_id,
+                    pattern=db_sub.event_pattern,
+                )
 
 
 async def seed_all(session: AsyncSession) -> int:
