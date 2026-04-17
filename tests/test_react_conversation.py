@@ -33,6 +33,20 @@ def test_parse_mixed_text_and_json() -> None:
     assert result["tool"] == "buyboxpricer.db.lost_buybox"
 
 
+def test_parse_tool_call_tag_format() -> None:
+    text = '[TOOL_CALL]\n{"tool": "buyboxpricer.db.lost_buybox", "args": {}}\n[/TOOL_CALL]'
+    result = parse_llm_response(text)
+    assert result["type"] == "tool_call"
+    assert result["tool"] == "buyboxpricer.db.lost_buybox"
+
+
+def test_parse_tool_call_with_surrounding_text() -> None:
+    text = 'Scout taraması başlatılıyor...\n\n{"tool": "pricefinder.db.scout_candidates", "args": {"limit": 3}}\n\nSonuçlar gelecek.'
+    result = parse_llm_response(text)
+    assert result["type"] == "tool_call"
+    assert result["tool"] == "pricefinder.db.scout_candidates"
+
+
 def test_parse_invalid_json_is_response() -> None:
     text = '{"broken json'
     result = parse_llm_response(text)

@@ -110,13 +110,13 @@ def parse_llm_response(text: str) -> dict[str, Any]:
     except (json.JSONDecodeError, ValueError):
         pass
 
-    # Try finding JSON object embedded in text (LLM sometimes adds
-    # prose before the JSON: "Kontrol ediyorum...\n{"tool": ...}")
-    tool_idx = candidate.find('{"tool"')
-    if tool_idx >= 0:
-        tail = candidate[tool_idx:]
+    # Handle [TOOL_CALL]{"tool": ...}[/TOOL_CALL] format (MiniMax style)
+    toolcall_match = re.search(
+        r'\[TOOL_CALL\]\s*(\{.*?\})\s*\[/TOOL_CALL\]', candidate, re.DOTALL
+    )
+    if toolcall_match:
         try:
-            obj = json.loads(tail)
+            obj = json.loads(toolcall_match.group(1))
             if isinstance(obj, dict) and "tool" in obj:
                 return {
                     "type": "tool_call",
@@ -125,6 +125,27 @@ def parse_llm_response(text: str) -> dict[str, Any]:
                 }
         except (json.JSONDecodeError, ValueError):
             pass
+
+    # Try finding JSON object embedded in text (LLM sometimes adds
+    # prose before the JSON: "Kontrol ediyorum...\n{"tool": ...}")
+    tool_idx = candidate.find('{"tool"')
+    if tool_idx >= 0:
+        tail = candidate[tool_idx:]
+        # Try full tail first, then progressively shorter (find closing brace)
+        for end_offset in range(len(tail), 0, -1):
+            chunk = tail[:end_offset]
+            if not chunk.endswith("}"):
+                continue
+            try:
+                obj = json.loads(chunk)
+                if isinstance(obj, dict) and "tool" in obj:
+                    return {
+                        "type": "tool_call",
+                        "tool": obj["tool"],
+                        "args": obj.get("args", {}),
+                    }
+            except (json.JSONDecodeError, ValueError):
+                continue
 
     return {"type": "response", "text": text}
 
