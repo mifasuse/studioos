@@ -66,6 +66,68 @@ class FakeEmbedder:
         return [x / norm for x in out] if norm else out
 
 
+class MiniMaxEmbedder:
+    """MiniMax embo-01 embedder.
+
+    API format differs from OpenAI:
+      - URL: POST /v1/embeddings?GroupId=XXX
+      - Body: {"model": "embo-01", "texts": [...], "type": "db"|"query"}
+      - Response: {"vectors": [[...], ...]}
+    """
+
+    dim = EMBEDDING_DIM
+    model = "embo-01"
+
+    def __init__(self, api_key: str, group_id: str, base_url: str = "https://api.minimax.io/v1"):
+        self.api_key = api_key
+        self.group_id = group_id
+        self.base_url = base_url.rstrip("/")
+        self._client = httpx.AsyncClient(timeout=30.0)
+        self._dim_detected = False
+
+    async def embed(self, text: str, embed_type: str = "db") -> list[float]:
+        result = await self.embed_batch([text], embed_type=embed_type)
+        return result[0]
+
+    async def embed_batch(
+        self, texts: list[str], embed_type: str = "db"
+    ) -> list[list[float]]:
+        if not texts:
+            return []
+        resp = await self._client.post(
+            f"{self.base_url}/embeddings?GroupId={self.group_id}",
+            json={"model": self.model, "texts": texts, "type": embed_type},
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        base_resp = data.get("base_resp") or {}
+        if base_resp.get("status_code", 0) != 0:
+            raise RuntimeError(
+                f"minimax embedding error: {base_resp.get('status_msg', '?')}"
+            )
+        vectors = data.get("vectors") or []
+        if not vectors:
+            raise RuntimeError("minimax embedding returned empty vectors")
+        # Auto-detect dimension on first successful call
+        if not self._dim_detected and vectors:
+            actual_dim = len(vectors[0])
+            if actual_dim != self.dim:
+                log.warning(
+                    "embedder.minimax.dim_mismatch",
+                    expected=self.dim,
+                    actual=actual_dim,
+                )
+            self._dim_detected = True
+        return vectors
+
+    async def close(self) -> None:
+        await self._client.aclose()
+
+
 class OpenAIEmbedder:
     """OpenAI text-embedding-3-small (1536 dims)."""
 
@@ -103,13 +165,21 @@ _singleton: Embedder | None = None
 def get_embedder() -> Embedder:
     """Return the configured embedder.
 
-    Picks OpenAIEmbedder if STUDIOOS_OPENAI_API_KEY is set, otherwise the
-    FakeEmbedder (zero-config dev/test).
+    Priority:
+      1. MiniMax (if MINIMAX_API_KEY + MINIMAX_GROUP_ID set)
+      2. OpenAI (if OPENAI_API_KEY set)
+      3. FakeEmbedder (zero-config dev/test)
     """
     global _singleton
     if _singleton is not None:
         return _singleton
-    if settings.openai_api_key:
+    if settings.minimax_api_key and getattr(settings, "minimax_group_id", ""):
+        log.info("embedder.minimax")
+        _singleton = MiniMaxEmbedder(
+            api_key=settings.minimax_api_key,
+            group_id=settings.minimax_group_id,
+        )
+    elif settings.openai_api_key:
         log.info("embedder.openai")
         _singleton = OpenAIEmbedder(api_key=settings.openai_api_key)
     else:

@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     minimax_api_key: str = ""
     minimax_base_url: str = "https://api.minimax.io/v1"
     minimax_model: str = "MiniMax-M2.7-highspeed"
+    minimax_group_id: str = ""
     minimax_cost_input_per_1k_cents: float = 1.0
     minimax_cost_output_per_1k_cents: float = 4.0
 

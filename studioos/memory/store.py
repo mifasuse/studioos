@@ -76,7 +76,11 @@ async def search_memory(
 ) -> list[MemorySearchResult]:
     """Semantic search using pgvector cosine distance."""
     embedder = get_embedder()
-    qvec = await embedder.embed(query)
+    # MiniMax uses type="query" for search vs type="db" for storage
+    if hasattr(embedder, "embed") and "embed_type" in embedder.embed.__code__.co_varnames:
+        qvec = await embedder.embed(query, embed_type="query")
+    else:
+        qvec = await embedder.embed(query)
 
     distance_expr = MemorySemantic.embedding.cosine_distance(qvec).label("distance")
 
