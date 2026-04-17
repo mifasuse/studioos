@@ -330,10 +330,7 @@ subscriptions:
   - subscriber: amz-qa
     event_pattern: "amz.deploy.notification"
     priority: 10
-  # Cross-agent: QA fail → CEO + Dev alerted
-  - subscriber: amz-ceo
-    event_pattern: "amz.qa.smoke_failed"
-    priority: 10
+  # Cross-agent: QA fail → Dev alerted (CEO learns via daily brief, not per-event)
   - subscriber: amz-dev
     event_pattern: "amz.qa.smoke_failed"
     priority: 10

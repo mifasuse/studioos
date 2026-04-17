@@ -248,17 +248,11 @@ subscriptions:
   - subscriber: app-studio-qa
     event_pattern: "app.task.qa"
     priority: 20
-  # Cross-agent: anomaly → CEO + pricing immediately notified
-  - subscriber: app-studio-ceo
-    event_pattern: "app.growth.anomaly_detected"
-    priority: 10
+  # Cross-agent: anomaly → pricing immediately notified (CEO learns via daily brief)
   - subscriber: app-studio-pricing
     event_pattern: "app.growth.anomaly_detected"
     priority: 15
-  # Cross-agent: QA fail → CEO + dev alerted
-  - subscriber: app-studio-ceo
-    event_pattern: "app.qa.failed"
-    priority: 10
+  # Cross-agent: QA fail → dev alerted
   - subscriber: app-studio-dev
     event_pattern: "app.qa.failed"
     priority: 10
