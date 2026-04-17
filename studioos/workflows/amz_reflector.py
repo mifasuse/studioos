@@ -29,6 +29,13 @@ from studioos.models import (
 )
 from studioos.runtime.workflow_registry import register_workflow
 from studioos.tools import invoke_from_state
+from studioos.workflows.outcome_checker import (
+    OUTCOME_RULES,
+    evaluate_discovery_outcome,
+    evaluate_reprice_outcome,
+    should_check_now,
+    update_strategy_stats,
+)
 
 log = get_logger(__name__)
 
@@ -53,6 +60,10 @@ class ReflectorState(TypedDict, total=False):
     memories: list[dict[str, Any]]
     kpi_updates: list[dict[str, Any]]
     summary: str
+    # M36: learning feedback loop
+    strategy_stats: dict[str, Any]
+    outcome_results: list[dict[str, Any]]
+    learning_insight: str | None
 
 
 SYSTEM_PROMPT = """You are the daily reflection agent for an autonomous
@@ -455,15 +466,183 @@ async def node_persist(state: ReflectorState) -> dict[str, Any]:
     }
 
 
+LEARNING_INSIGHT_PROMPT = """Sen bir Amazon arbitraj stüdyosunun öğrenme analisti olarak görev yapıyorsun.
+Sana bu haftanın strateji performans istatistikleri ve sonuç kontrol bulguları verilecek.
+Bunlara dayanarak kısa, eyleme dönüştürülebilir bir öğrenme insight'ı üret.
+
+Format: ≤ 5 madde, terse ve somut. Türkçe yaz.
+"""
+
+
+async def node_check_outcomes(state: ReflectorState) -> dict[str, Any]:
+    """Check outcomes of past actions and update strategy stats."""
+    since = datetime.now(UTC) - timedelta(days=7)
+    checkable_types = list(OUTCOME_RULES.keys())
+
+    async with session_scope() as session:
+        event_rows = (
+            await session.execute(
+                select(Event)
+                .where(Event.event_type.in_(checkable_types))
+                .where(Event.recorded_at >= since)
+                .order_by(desc(Event.recorded_at))
+                .limit(100)
+            )
+        ).scalars().all()
+
+    now = datetime.now(UTC)
+    outcome_results: list[dict[str, Any]] = []
+    strategy_stats: dict[str, Any] = dict(state.get("strategy_stats") or {})
+
+    # Fetch current lost buybox ASINs once (if there are reprice events to check)
+    reprice_events = [
+        e for e in event_rows
+        if e.event_type == "amz.reprice.recommended" and should_check_now(e.event_type, e.recorded_at, now)
+    ]
+    lost_buybox_asins: set[str] = set()
+    if reprice_events:
+        tool_result = await invoke_from_state(
+            state,
+            "buyboxpricer.db.lost_buybox",
+            {"limit": 100},
+        )
+        if tool_result["status"] == "ok":
+            items = (tool_result.get("data") or {}).get("items", [])
+            lost_buybox_asins = {item["asin"] for item in items if item.get("asin")}
+
+    # Fetch confirmed opportunity ASINs for discovery events
+    discovery_events = [
+        e for e in event_rows
+        if e.event_type == "amz.opportunity.discovered" and should_check_now(e.event_type, e.recorded_at, now)
+    ]
+    confirmed_asins: set[str] = set()
+    if discovery_events:
+        async with session_scope() as session:
+            confirmed_rows = (
+                await session.execute(
+                    select(Event.payload)
+                    .where(Event.event_type == "amz.opportunity.confirmed")
+                    .where(Event.recorded_at >= since)
+                )
+            ).all()
+            confirmed_asins = {
+                row[0].get("asin") for row in confirmed_rows if row[0].get("asin")
+            }
+
+    for event in event_rows:
+        if not should_check_now(event.event_type, event.recorded_at, now):
+            continue
+
+        asin = event.payload.get("asin", "")
+        if not asin:
+            continue
+
+        if event.event_type == "amz.reprice.recommended":
+            result = evaluate_reprice_outcome(asin, lost_buybox_asins)
+            strategy = event.payload.get("strategy", "reprice")
+            strategy_stats = update_strategy_stats(strategy_stats, strategy, result["outcome"])
+            outcome_results.append({
+                "event_type": event.event_type,
+                "asin": asin,
+                **result,
+            })
+
+        elif event.event_type == "amz.opportunity.discovered":
+            result = evaluate_discovery_outcome(asin, confirmed_asins)
+            strategy = event.payload.get("strategy", "discovery")
+            if result["outcome"] != "pending":
+                strategy_stats = update_strategy_stats(strategy_stats, strategy, result["outcome"])
+            outcome_results.append({
+                "event_type": event.event_type,
+                "asin": asin,
+                **result,
+            })
+
+    log.info(
+        "amz_reflector.check_outcomes",
+        checked=len(outcome_results),
+        strategies=list(strategy_stats.keys()),
+    )
+
+    return {
+        "strategy_stats": strategy_stats,
+        "outcome_results": outcome_results,
+    }
+
+
+async def node_learning_insight(state: ReflectorState) -> dict[str, Any]:
+    """Generate a learning insight from strategy stats and outcome results."""
+    strategy_stats = state.get("strategy_stats") or {}
+    outcome_results = state.get("outcome_results") or []
+
+    if not strategy_stats and not outcome_results:
+        return {"learning_insight": None}
+
+    stats_text = json.dumps(strategy_stats, ensure_ascii=False, indent=2)
+    outcomes_text = json.dumps(outcome_results[:20], ensure_ascii=False, indent=2)
+
+    user = (
+        f"Bu hafta strateji performansı:\n```json\n{stats_text}\n```\n\n"
+        f"Sonuç kontrol bulguları ({len(outcome_results)} adet):\n```json\n{outcomes_text}\n```\n\n"
+        "Öğrenme insight'ı üret."
+    )
+
+    result = await invoke_from_state(
+        state,
+        "llm.chat",
+        {
+            "messages": [
+                {"role": "system", "content": LEARNING_INSIGHT_PROMPT},
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": 800,
+            "temperature": 0.2,
+        },
+    )
+
+    if result["status"] != "ok":
+        log.warning(
+            "amz_reflector.learning_insight_failed",
+            error=result.get("error"),
+        )
+        return {"learning_insight": None}
+
+    insight = (result["data"] or {}).get("content", "").strip()
+
+    # Persist insight as procedural memory
+    if insight:
+        today = datetime.now(UTC).date()
+        async with session_scope() as session:
+            session.add(
+                MemoryProcedural(
+                    id=f"amz_learning_insight_{today.isoformat()}",
+                    studio_id=state.get("studio_id"),
+                    version=1,
+                    content=insight[:4000],
+                    author=state["agent_id"],
+                    change_summary=f"Learning insight auto-generated on {today.isoformat()}",
+                    active=True,
+                )
+            )
+
+    log.info("amz_reflector.learning_insight_written", chars=len(insight))
+
+    return {"learning_insight": insight}
+
+
 def build_graph() -> Any:
     graph = StateGraph(ReflectorState)
     graph.add_node("collect", node_collect)
     graph.add_node("reflect", node_reflect)
+    graph.add_node("check_outcomes", node_check_outcomes)
+    graph.add_node("learning_insight", node_learning_insight)
     graph.add_node("update_playbook", node_update_playbook)
     graph.add_node("persist", node_persist)
     graph.add_edge(START, "collect")
     graph.add_edge("collect", "reflect")
-    graph.add_edge("reflect", "update_playbook")
+    graph.add_edge("reflect", "check_outcomes")
+    graph.add_edge("check_outcomes", "learning_insight")
+    graph.add_edge("learning_insight", "update_playbook")
     graph.add_edge("update_playbook", "persist")
     graph.add_edge("persist", END)
     return graph.compile()
