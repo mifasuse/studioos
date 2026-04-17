@@ -334,11 +334,6 @@ subscriptions:
   - subscriber: amz-dev
     event_pattern: "amz.qa.smoke_failed"
     priority: 10
-  # Cross-agent: confirmed opportunity → pricer checks repricing
-  - subscriber: amz-pricer
-    event_pattern: "amz.opportunity.confirmed"
-    priority: 35
-  # Cross-agent: reprice done → crosslister checks eBay opportunity
-  - subscriber: amz-crosslister
-    event_pattern: "amz.reprice.recommended"
-    priority: 40
+  # Note: cross-agent subscriptions (pricer←confirmed, crosslister←reprice)
+  # removed — they caused cascade loops. Agents rely on their own schedules
+  # + CEO daily delegation for coordination.
