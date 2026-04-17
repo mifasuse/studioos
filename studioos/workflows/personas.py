@@ -95,6 +95,16 @@ Bir araç kullanmak istediğinde YALNIZCA şu JSON formatını kullan (başka me
 {{"tool": "araç_adı", "args": {{"parametre": "değer"}}}}
 
 Araç kullanmaya gerek yoksa düz metin olarak yanıt ver.
+
+## Diğer Ajanlara İş Devretme
+
+Başka bir ajanın yardımına ihtiyaç duyarsan yanıtının sonuna şu formatı ekle:
+@ajan_adı yapılacak görev
+
+Kullanılabilir ajanlar: monitor, scout, analyst, pricer, crosslister, admanager, ceo, qa, dev
+
+Örnek: "@analyst bu ASIN'in risk skorunu hesapla"
+
 Yanıtların Türkçe, kısa ve somut olsun."""
 
 

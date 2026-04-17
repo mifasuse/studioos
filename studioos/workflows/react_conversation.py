@@ -422,7 +422,54 @@ async def node_format_response(state: ReactState) -> dict[str, Any]:
             }
         )
 
+    # Agent-to-agent chaining: detect "@agent_name task" in response
+    chained: list[str] = []
+    if trigger_type == "slack_mention" and channel and thread_ts:
+        from studioos.slack_routing import (
+            _AGENT_SHORT_NAMES,
+            check_cascade,
+        )
+        # Look for @short_name patterns in response
+        for match in re.finditer(r"@(\w[\w-]*)", final_response):
+            target_short = match.group(1).lower()
+            target_agent = _AGENT_SHORT_NAMES.get(target_short)
+            if target_agent and target_agent != agent_id:
+                if check_cascade(thread_ts, target_agent, responding_agent_id=agent_id):
+                    # Extract the task text after the mention
+                    after = final_response[match.end():].strip()
+                    task_text = after.split("\n")[0][:200] if after else "devam et"
+                    try:
+                        from studioos.runtime.trigger import trigger_run
+                        await trigger_run(
+                            agent_id=target_agent,
+                            trigger_type="slack_mention",
+                            trigger_ref=thread_ts,
+                            input_data={
+                                "event_type": "slack.mention.received",
+                                "payload": {
+                                    "agent_id": target_agent,
+                                    "studio_id": state.get("studio_id", ""),
+                                    "text": f"{target_short} {task_text}",
+                                    "user": agent_id,  # source agent
+                                    "channel": channel,
+                                    "thread_ts": thread_ts,
+                                },
+                            },
+                            workflow_override="react_conversation",
+                        )
+                        chained.append(target_agent)
+                        log.info(
+                            "react_conversation.chained",
+                            source=agent_id,
+                            target=target_agent,
+                            task=task_text[:60],
+                        )
+                    except Exception as exc:
+                        log.warning("react_conversation.chain_error", error=str(exc)[:100])
+
     summary = f"ReAct tamamlandı. Yanıt: {final_response[:100]}"
+    if chained:
+        summary += f" → chained: {','.join(chained)}"
 
     return {
         "events": events,
