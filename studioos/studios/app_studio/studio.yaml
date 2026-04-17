@@ -67,7 +67,7 @@ agents:
     heartbeat_config: {}
     schedule_cron: "@every 24h"
     goals:
-      tracked_apps: [quit_smoking, sms_forward]
+      tracked_apps: [quit_smoking, sms_forward, moodmate]
     tool_scope:
       - telegram.notify
       - memory.search
@@ -108,7 +108,7 @@ agents:
     heartbeat_config: {}
     schedule_cron: "0 8 * * *"
     goals:
-      tracked_apps: [quit_smoking, sms_forward]
+      tracked_apps: [quit_smoking, sms_forward, moodmate]
       anomaly_thresholds:
         min_roi: 1.0
         max_churn_rate: 15.0
@@ -141,7 +141,7 @@ agents:
     heartbeat_config: {}
     schedule_cron: "0 9 * * *"
     goals:
-      tracked_apps: [quit_smoking, sms_forward]
+      tracked_apps: [quit_smoking, sms_forward, moodmate]
     tool_scope:
       - hub.api.overview
       - hub.api.metrics
@@ -191,7 +191,7 @@ agents:
     heartbeat_config: {}
     schedule_cron: "@every 6h"
     goals:
-      tracked_apps: [quit_smoking, sms_forward]
+      tracked_apps: [quit_smoking, sms_forward, moodmate]
       failure_rate_threshold: 20.0
     tool_scope:
       - hub.api.overview
@@ -206,7 +206,7 @@ agents:
     heartbeat_config: {}
     schedule_cron: "@every 24h"
     goals:
-      tracked_apps: [quit_smoking, sms_forward]
+      tracked_apps: [quit_smoking, sms_forward, moodmate]
       min_roi: 0
     tool_scope:
       - hub.api.campaigns
