@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import time
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response
 
@@ -72,6 +74,52 @@ async def slack_events(
     return {"ok": True}
 
 
+async def _handle_approval_command(text: str, channel: str, ts: str) -> None:
+    """Handle 'approve {id}' or 'deny {id}' commands from Slack."""
+    parts = text.strip().split(None, 1)
+    if len(parts) < 2:
+        return
+    action = parts[0].lower()
+    raw_id = parts[1].strip()
+    decision = "approved" if action == "approve" else "denied"
+    try:
+        approval_id = UUID(raw_id)
+    except (ValueError, TypeError):
+        log.warning("slack_events.bad_approval_id", raw=raw_id[:40])
+        return
+    try:
+        from studioos.approvals import decide_approval
+        from studioos.db import session_scope
+
+        async with session_scope() as session:
+            row = await decide_approval(
+                session,
+                approval_id=approval_id,
+                decision=decision,
+                decided_by="slack",
+                note="via Slack command",
+            )
+        # Confirm in Slack
+        token = settings.slack_bot_token
+        if token:
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(
+                    "https://slack.com/api/chat.postMessage",
+                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                    json={
+                        "channel": channel,
+                        "thread_ts": ts,
+                        "text": f"✅ Approval `{raw_id[:8]}...` → **{decision}**",
+                    },
+                )
+        log.info("slack_events.approval_decided", id=str(approval_id), decision=decision)
+    except ValueError as exc:
+        log.warning("slack_events.approval_error", error=str(exc)[:100])
+    except Exception as exc:
+        log.warning("slack_events.approval_error", error=str(exc)[:100])
+
+
 async def _process_mention(event: dict[str, Any]) -> None:
     """Route a Slack message to the correct agent run.
 
@@ -88,6 +136,13 @@ async def _process_mention(event: dict[str, Any]) -> None:
 
     text = event.get("text", "")
     channel = event.get("channel", "")
+
+    # Handle approval commands: "approve {id}" or "deny {id}"
+    clean = re.sub(r"<@[UW][A-Z0-9_]+>\s*", "", text).strip()
+    if clean.lower().startswith(("approve ", "deny ")):
+        await _handle_approval_command(clean, channel, event.get("ts", ""))
+        return
+
     agent_id = resolve_agent_from_mention(text, channel=channel)
     if not agent_id:
         log.debug("slack_events.no_agent", text=text[:100])

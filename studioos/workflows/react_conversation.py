@@ -173,6 +173,10 @@ async def node_load_context(state: ReactState) -> dict[str, Any]:
         user_message = payload.get("text", "")
         thread_ts = payload.get("thread_ts", "")
         channel = payload.get("channel", "")
+    elif trigger_type == "telegram_message":
+        user_message = payload.get("text", "")
+        thread_ts = ""
+        channel = payload.get("chat_id", "")  # reuse channel field for chat_id
     else:
         user_message = payload.get("text") or payload.get("description") or payload.get("title") or ""
         thread_ts = payload.get("thread_ts", "")
@@ -214,17 +218,16 @@ async def node_load_context(state: ReactState) -> dict[str, Any]:
         except Exception as exc:
             log.warning("react_conversation.thread_history_error", error=str(exc)[:100])
 
-    # Load recent memories (skip if hangs — embedder.fake can deadlock)
+    # Load recent memories (OpenAI embedding active — no deadlock risk)
     memories: list[dict[str, Any]] = []
     try:
-        mem_result = await asyncio.wait_for(
-            _invoke_unguarded(state, "memory.search", {"query": user_message or agent_id, "limit": 5}),
-            timeout=5.0,
+        mem_result = await _invoke_unguarded(
+            state, "memory.search", {"query": user_message or agent_id, "limit": 5}
         )
         if mem_result.get("status") == "ok":
             memories = (mem_result.get("data") or {}).get("results") or (mem_result.get("data") or {}).get("items") or []
-    except (asyncio.TimeoutError, Exception) as exc:
-        log.warning("react_conversation.load_context.memory_skip", error=str(exc)[:100])
+    except Exception as exc:
+        log.warning("react_conversation.load_context.memory_error", error=str(exc)[:100])
 
     # Build initial messages list
     messages: list[dict[str, Any]] = [
@@ -398,6 +401,14 @@ async def node_format_response(state: ReactState) -> dict[str, Any]:
             await _invoke_unguarded(state, "slack.notify", notify_args)
         except Exception as exc:
             log.warning("react_conversation.format_response.slack_error", error=str(exc))
+    elif trigger_type == "telegram_message":
+        try:
+            tg_args: dict[str, Any] = {"text": final_response}
+            if channel:  # channel holds chat_id for telegram
+                tg_args["chat_id"] = channel
+            await _invoke_unguarded(state, "telegram.notify", tg_args)
+        except Exception as exc:
+            log.warning("react_conversation.format_response.telegram_error", error=str(exc))
     else:
         try:
             await _invoke_unguarded(state, "telegram.notify", {"text": final_response})
