@@ -110,6 +110,13 @@ def parse_llm_response(text: str) -> dict[str, Any]:
     except (json.JSONDecodeError, ValueError):
         pass
 
+    # Try fixing truncated JSON — LLM sometimes omits closing braces
+    if '{"tool"' in candidate:
+        tool_part = candidate[candidate.find('{"tool"'):]
+        open_braces = tool_part.count("{") - tool_part.count("}")
+        if open_braces > 0:
+            candidate = candidate + "}" * open_braces
+
     # Handle [TOOL_CALL]{"tool": ...}[/TOOL_CALL] format (MiniMax style)
     toolcall_match = re.search(
         r'\[TOOL_CALL\]\s*(\{.*?\})\s*\[/TOOL_CALL\]', candidate, re.DOTALL
