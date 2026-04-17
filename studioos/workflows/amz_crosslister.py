@@ -205,12 +205,12 @@ def node_diff(state: CrossState) -> dict[str, Any]:
         new_normal.append({**c, **pricing, "priority": "normal"})
         seen.add(asin)
 
-    # Always include stranded in new_finds (dedup against seen set too).
+    # Stranded items also deduped against seen — only new stranded reported
     new_finds: list[dict[str, Any]] = []
     for s in stranded_tagged:
         if s["asin"] not in seen:
             seen.add(s["asin"])
-        new_finds.append(s)
+            new_finds.append(s)
     new_finds.extend(new_normal)
 
     if len(seen) > 500:
