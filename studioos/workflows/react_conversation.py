@@ -231,16 +231,25 @@ async def node_load_context(state: ReactState) -> dict[str, Any]:
         log.warning("react_conversation.load_context.memory_skip", error=str(exc)[:100])
 
     # Strategy performance stats from agent state (learning feedback loop)
-    strategy_stats = (state.get("state") or {}).get("strategy_stats") or {}
+    agent_state = state.get("state") or {}
+    strategy_stats = agent_state.get("strategy_stats") or {}
+    auto_adjustments = agent_state.get("auto_adjustments") or {}
     stats_context = ""
-    if strategy_stats:
+    if strategy_stats or auto_adjustments:
         lines = []
-        for strategy, data in strategy_stats.items():
-            rate = data.get("rate", 0)
-            total = data.get("total", 0)
-            success = data.get("success", 0)
-            lines.append(f"- {strategy}: %{int(rate*100)} başarı ({success}/{total})")
-        stats_context = "\n\nGeçmiş performansın:\n" + "\n".join(lines) + "\nBu verilere dayanarak karar ver."
+        if strategy_stats:
+            lines.append("Geçmiş performansın:")
+            for strategy, data in strategy_stats.items():
+                rate = data.get("rate", 0)
+                total = data.get("total", 0)
+                success = data.get("success", 0)
+                lines.append(f"- {strategy}: %{int(rate*100)} başarı ({success}/{total})")
+        if auto_adjustments:
+            lines.append("\nOtomatik ayarlamalar (öğrenme sistemi tarafından önerildi):")
+            for key, val in auto_adjustments.items():
+                lines.append(f"- {key}: {val}")
+        lines.append("\nBu verilere dayanarak karar ver.")
+        stats_context = "\n\n" + "\n".join(lines)
 
     # Build initial messages list
     messages: list[dict[str, Any]] = [

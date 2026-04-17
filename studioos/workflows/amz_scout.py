@@ -49,9 +49,11 @@ class ScoutState(TypedDict, total=False):
 
 def _scout_params(state: ScoutState) -> dict[str, Any]:
     goals = state.get("goals") or {}
+    # Auto-adjustment from learning feedback loop overrides static goals
+    auto = (state.get("state") or {}).get("auto_adjustments") or {}
     return {
         "limit": int(goals.get("scan_limit", 20)),
-        "min_roi_pct": float(goals.get("min_roi_pct", 20.0)),
+        "min_roi_pct": float(auto.get("min_roi_pct", goals.get("min_roi_pct", 20.0))),
         "max_roi_pct": float(goals.get("max_roi_pct", 1000.0)),
         "max_sales_rank": int(goals.get("max_sales_rank", 100_000)),
         "min_monthly_sold": int(goals.get("min_monthly_sold", 30)),

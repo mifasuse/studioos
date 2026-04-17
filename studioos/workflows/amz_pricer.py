@@ -43,6 +43,10 @@ class PricerState(TypedDict, total=False):
 
 
 def _underbid_pct(state: PricerState) -> float:
+    # Auto-adjustment from learning feedback loop overrides static goal
+    auto = (state.get("state") or {}).get("auto_adjustments") or {}
+    if "underbid_pct" in auto:
+        return float(auto["underbid_pct"])
     goals = state.get("goals") or {}
     return float(goals.get("underbid_pct", 1.0))
 

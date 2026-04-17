@@ -468,9 +468,32 @@ async def node_persist(state: ReflectorState) -> dict[str, Any]:
 
 LEARNING_INSIGHT_PROMPT = """Sen bir Amazon arbitraj stüdyosunun öğrenme analisti olarak görev yapıyorsun.
 Sana bu haftanın strateji performans istatistikleri ve sonuç kontrol bulguları verilecek.
-Bunlara dayanarak kısa, eyleme dönüştürülebilir bir öğrenme insight'ı üret.
 
-Format: ≤ 5 madde, terse ve somut. Türkçe yaz.
+İki bölüm üret:
+
+## Öğrenme Insight'ları
+≤ 5 madde, terse ve somut.
+
+## Strateji Ayarlama Önerileri
+Performans verilerine göre şu parametreleri öner (sadece değişiklik gerekiyorsa):
+
+```json
+{
+  "underbid_pct": 1.0,
+  "min_roi_pct": 20.0,
+  "aggressive_roi_threshold": 100.0,
+  "anomaly_threshold_pct": 2.0
+}
+```
+
+Kurallar:
+- buy_box_win success rate < %50 → underbid_pct artır (1.0 → 1.5 veya 2.0)
+- buy_box_win success rate > %80 → underbid_pct azalt (1.0 → 0.5)
+- scout discovery→confirmed rate < %20 → min_roi_pct artır (daha seçici ol)
+- scout discovery→confirmed rate > %60 → min_roi_pct azalt (daha agresif ol)
+
+Değişiklik gerekmiyorsa JSON bloğu ekleme.
+Türkçe yaz.
 """
 
 
@@ -625,9 +648,27 @@ async def node_learning_insight(state: ReflectorState) -> dict[str, Any]:
                 )
             )
 
+    # Parse strategy adjustment JSON if present
+    import re as _re
+    state_accum = dict(state.get("state") or {})
+    json_match = _re.search(r"```json\s*(\{.*?\})\s*```", insight, _re.DOTALL)
+    if json_match:
+        try:
+            adjustments = json.loads(json_match.group(1))
+            if isinstance(adjustments, dict):
+                prev = dict(state_accum.get("auto_adjustments") or {})
+                prev.update(adjustments)
+                state_accum["auto_adjustments"] = prev
+                log.info(
+                    "amz_reflector.strategy_adjusted",
+                    adjustments=adjustments,
+                )
+        except (json.JSONDecodeError, ValueError):
+            pass
+
     log.info("amz_reflector.learning_insight_written", chars=len(insight))
 
-    return {"learning_insight": insight}
+    return {"learning_insight": insight, "state": state_accum}
 
 
 def build_graph() -> Any:
