@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+
+import httpx
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -155,6 +157,35 @@ async def node_load_context(state: ReactState) -> dict[str, Any]:
     # Build system prompt
     system_prompt = build_system_prompt(agent_id, tool_scope)
 
+    # Load thread history for multi-turn context (Slack only)
+    thread_history: list[dict[str, str]] = []
+    if trigger_type == "slack_mention" and thread_ts and channel:
+        try:
+            from studioos.config import settings as _cfg
+            token = _cfg.slack_bot_token
+            if token:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.get(
+                        "https://slack.com/api/conversations.replies",
+                        headers={"Authorization": f"Bearer {token}"},
+                        params={"channel": channel, "ts": thread_ts, "limit": 10},
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        bot_id = None
+                        for msg in (data.get("messages") or [])[:-1]:  # exclude current
+                            msg_text = msg.get("text", "")
+                            if msg.get("bot_id"):
+                                thread_history.append({"role": "assistant", "content": msg_text[:500]})
+                                bot_id = msg.get("bot_id")
+                            else:
+                                # Strip mention from user messages
+                                clean = re.sub(r"<@[UW][A-Z0-9_]+>\s*", "", msg_text).strip()
+                                if clean:
+                                    thread_history.append({"role": "user", "content": clean[:500]})
+        except Exception as exc:
+            log.warning("react_conversation.thread_history_error", error=str(exc)[:100])
+
     # Load recent memories (skip if hangs — embedder.fake can deadlock)
     memories: list[dict[str, Any]] = []
     try:
@@ -181,6 +212,9 @@ async def node_load_context(state: ReactState) -> dict[str, Any]:
                 "content": f"Geçmiş hafıza:\n{mem_text}",
             }
         )
+    # Thread history for multi-turn context (previous messages in thread)
+    if thread_history:
+        messages.extend(thread_history)
     messages.append({"role": "user", "content": user_message})
 
     return {
