@@ -54,7 +54,7 @@ def test_parse_invalid_json_is_response() -> None:
 
 
 def test_max_iterations_constant() -> None:
-    assert MAX_ITERATIONS == 5
+    assert MAX_ITERATIONS == 8
 
 
 def test_workflow_compiles() -> None:
