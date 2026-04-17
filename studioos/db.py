@@ -40,8 +40,8 @@ def get_engine() -> AsyncEngine:
         _engines[key] = create_async_engine(
             settings.database_url,
             echo=False,
-            pool_size=5,
-            max_overflow=10,
+            pool_size=20,
+            max_overflow=30,
             pool_pre_ping=True,
         )
     return _engines[key]
