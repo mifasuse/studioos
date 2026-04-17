@@ -230,9 +230,21 @@ async def node_load_context(state: ReactState) -> dict[str, Any]:
     except (asyncio.TimeoutError, Exception) as exc:
         log.warning("react_conversation.load_context.memory_skip", error=str(exc)[:100])
 
+    # Strategy performance stats from agent state (learning feedback loop)
+    strategy_stats = (state.get("state") or {}).get("strategy_stats") or {}
+    stats_context = ""
+    if strategy_stats:
+        lines = []
+        for strategy, data in strategy_stats.items():
+            rate = data.get("rate", 0)
+            total = data.get("total", 0)
+            success = data.get("success", 0)
+            lines.append(f"- {strategy}: %{int(rate*100)} başarı ({success}/{total})")
+        stats_context = "\n\nGeçmiş performansın:\n" + "\n".join(lines) + "\nBu verilere dayanarak karar ver."
+
     # Build initial messages list
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": system_prompt + stats_context},
     ]
     if memories:
         mem_text = "\n".join(
