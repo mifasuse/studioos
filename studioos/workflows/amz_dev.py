@@ -240,7 +240,7 @@ async def node_report(state: DevState) -> dict[str, Any]:
             f"{total} runs, {len(failures)} failures"
             + (
                 " (notified)"
-                if notify_tg["status"] == "ok" or notify_slack["status"] == "ok"
+                if failures
                 else ""
             )
         ),
