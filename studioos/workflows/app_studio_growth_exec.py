@@ -203,44 +203,20 @@ async def node_gate(state: GrowthExecState) -> dict[str, Any]:
                 }
             )
 
-    # Compose notification text
-    lines = [f"*App Studio Deney Kapısı — {launched_at[:10]}*"]
-    if fast_exps:
-        lines.append(f"\nFast Lane ({len(fast_exps)} deney) — doğrudan başlatıldı:")
-        for e in fast_exps:
-            lines.append(f"  • [{e.get('app_id')}] {e.get('hypothesis', '')[:80]}")
-    if ceo_exps:
-        lines.append(f"\nCEO Lane ({len(ceo_exps)} deney) — onay gerekli:")
-        for e in ceo_exps:
-            lines.append(f"  • [{e.get('app_id')}] {e.get('hypothesis', '')[:80]}")
-    if not fast_exps and not ceo_exps:
-        lines.append("Bu hafta öneri üretilemedi.")
-
-    notify_text = "\n".join(lines)
-
-    slack_result = await invoke_from_state(
-        state, "slack.notify", {"text": notify_text}
-    )
-    if slack_result.get("status") != "ok":
-        log.warning(
-            "app_studio_growth_exec.slack_failed",
-            error=slack_result.get("error"),
-        )
-
-    tg_result = await invoke_from_state(
-        state,
-        "telegram.notify",
-        {
-            "text": notify_text,
-            "parse_mode": "Markdown",
-            "disable_web_page_preview": True,
-        },
-    )
-    if tg_result.get("status") != "ok":
-        log.warning(
-            "app_studio_growth_exec.telegram_failed",
-            error=tg_result.get("error"),
-        )
+    # Only notify if there are actual experiments to report
+    if fast_exps or ceo_exps:
+        lines = [f"*App Studio Deney Kapısı — {launched_at[:10]}*"]
+        if fast_exps:
+            lines.append(f"\nFast Lane ({len(fast_exps)} deney) — doğrudan başlatıldı:")
+            for e in fast_exps:
+                lines.append(f"  • [{e.get('app_id')}] {e.get('hypothesis', '')[:80]}")
+        if ceo_exps:
+            lines.append(f"\nCEO Lane ({len(ceo_exps)} deney) — onay gerekli:")
+            for e in ceo_exps:
+                lines.append(f"  • [{e.get('app_id')}] {e.get('hypothesis', '')[:80]}")
+        notify_text = "\n".join(lines)
+        await invoke_from_state(state, "slack.notify", {"text": notify_text})
+        await invoke_from_state(state, "telegram.notify", {"text": notify_text})
 
     state_accum = dict(state.get("state") or {})
     state_accum["experiments_proposed"] = int(
@@ -274,8 +250,7 @@ async def node_gate(state: GrowthExecState) -> dict[str, Any]:
         ],
         "state": state_accum,
         "summary": (
-            f"Growth exec: {len(fast_exps)} launched, {len(ceo_exps)} proposed "
-            f"(slack={slack_result.get('status')}, tg={tg_result.get('status')})"
+            f"Growth exec: {len(fast_exps)} launched, {len(ceo_exps)} proposed"
         ),
     }
 
