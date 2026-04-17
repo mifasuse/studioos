@@ -172,7 +172,9 @@ agents:
     heartbeat_config: {}
     schedule_cron: "@every 1h"
     goals:
-      repos: []
+      repos:
+        - /home/deployer/openclaw/workspace/workspace/studios/app-studio/projects/quit_smoking_now
+        - /home/deployer/openclaw/workspace/workspace/studios/app-studio/projects/sms_forward
     tool_scope:
       - exec.git_status
       - exec.git_log
