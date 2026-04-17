@@ -152,12 +152,45 @@ async def node_analyze(state: PricingState) -> dict[str, Any]:
     recommendation: dict[str, Any] = {"app_id": app_id}
 
     if llm_result.get("status") == "ok":
-        content = (llm_result.get("data") or {}).get("content", "")
+        content = (llm_result.get("data") or {}).get("content", "").strip()
+        parsed = False
+        # Try direct JSON parse
         try:
             raw = json.loads(content)
             if isinstance(raw, dict):
                 recommendation.update(raw)
+                parsed = True
         except (ValueError, TypeError):
+            pass
+        # Try extracting JSON from markdown fence or mixed text
+        if not parsed:
+            import re
+            fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
+            if fence:
+                try:
+                    raw = json.loads(fence.group(1))
+                    if isinstance(raw, dict):
+                        recommendation.update(raw)
+                        parsed = True
+                except (ValueError, TypeError):
+                    pass
+        if not parsed:
+            # Find {"app_id" or {"current_price" in text
+            idx = content.find('{"')
+            if idx >= 0:
+                tail = content[idx:]
+                for end in range(len(tail), 0, -1):
+                    if not tail[:end].rstrip().endswith("}"):
+                        continue
+                    try:
+                        raw = json.loads(tail[:end])
+                        if isinstance(raw, dict):
+                            recommendation.update(raw)
+                            parsed = True
+                            break
+                    except (ValueError, TypeError):
+                        continue
+        if not parsed:
             log.warning("app_studio_pricing.parse_failed", content=content[:200])
             recommendation["rationale"] = content[:300]
     else:
