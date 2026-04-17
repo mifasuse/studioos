@@ -389,17 +389,17 @@ async def node_report(state: QAState) -> dict[str, Any]:
     overall, slack_text, tg_text = _format_report(results, commit)
     failed_services = [r["service"] for r in results if not r["ok"]]
 
-    notify = await invoke_from_state(
-        state,
-        "telegram.notify",
-        {
-            "text": tg_text,
-            "parse_mode": "Markdown",
-            "disable_web_page_preview": True,
-        },
-    )
-    # Only post to Slack on FAIL — PASS is Telegram-only to reduce noise
+    # Only notify on FAIL — PASS is silent to reduce noise
     if failed_services:
+        notify = await invoke_from_state(
+            state,
+            "telegram.notify",
+            {
+                "text": tg_text,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True,
+            },
+        )
         slack = await invoke_from_state(
             state,
             "slack.notify",
