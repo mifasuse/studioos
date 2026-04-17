@@ -491,7 +491,7 @@ async def node_report(state: QAState) -> dict[str, Any]:
         "state": state_accum,
         "summary": (
             f"{overall} {passed}/{total}"
-            + (" notified" if notify["status"] == "ok" or slack["status"] == "ok" else "")
+            + (" notified" if failed_services else "")
         ),
     }
 
