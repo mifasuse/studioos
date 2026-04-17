@@ -404,12 +404,19 @@ async def node_format_response(state: ReactState) -> dict[str, Any]:
             log.warning("react_conversation.format_response.slack_error", error=str(exc))
     elif trigger_type == "telegram_message":
         try:
-            tg_args: dict[str, Any] = {"text": final_response}
+            tg_args: dict[str, Any] = {"text": final_response, "parse_mode": ""}
             if channel:  # channel holds chat_id for telegram
                 tg_args["chat_id"] = channel
             await _invoke_unguarded(state, "telegram.notify", tg_args)
         except Exception as exc:
-            log.warning("react_conversation.format_response.telegram_error", error=str(exc))
+            # Retry without markdown if parse fails
+            try:
+                tg_args_plain: dict[str, Any] = {"text": final_response, "parse_mode": ""}
+                if channel:
+                    tg_args_plain["chat_id"] = channel
+                await _invoke_unguarded(state, "telegram.notify", tg_args_plain)
+            except Exception:
+                log.warning("react_conversation.format_response.telegram_error", error=str(exc))
     else:
         try:
             await _invoke_unguarded(state, "telegram.notify", {"text": final_response})
