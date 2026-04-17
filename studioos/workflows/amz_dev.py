@@ -198,18 +198,20 @@ async def node_report(state: DevState) -> dict[str, Any]:
     if alembic_lines:
         text += "\n" + "\n".join(alembic_lines)
 
-    notify_tg = await invoke_from_state(
-        state,
-        "telegram.notify",
-        {
-            "text": text,
-            "parse_mode": "Markdown",
-            "disable_web_page_preview": True,
-        },
-    )
-    notify_slack = await invoke_from_state(
-        state, "slack.notify", {"text": text, "mrkdwn": True}
-    )
+    # Only notify on failures — silent when all green
+    if failures:
+        await invoke_from_state(
+            state,
+            "telegram.notify",
+            {
+                "text": text,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True,
+            },
+        )
+        await invoke_from_state(
+            state, "slack.notify", {"text": text, "mrkdwn": True}
+        )
 
     state_accum = dict(state.get("state") or {})
     state_accum["pulses_total"] = int(state_accum.get("pulses_total", 0)) + 1
