@@ -73,8 +73,17 @@ async def slack_events(
 
 
 async def _process_mention(event: dict[str, Any]) -> None:
-    """Route an app_mention event to the correct agent run."""
-    if event.get("type") != "app_mention":
+    """Route a Slack message to the correct agent run.
+
+    Handles both:
+      - app_mention: "@StudioOS pricer ..." (explicit mention)
+      - message: "pricer Buy Box durumu" (direct message, no mention needed)
+    """
+    event_type = event.get("type")
+    if event_type not in ("app_mention", "message"):
+        return
+    # Skip message edits, file shares, etc.
+    if event.get("subtype"):
         return
 
     text = event.get("text", "")
