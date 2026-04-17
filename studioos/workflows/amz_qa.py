@@ -398,11 +398,15 @@ async def node_report(state: QAState) -> dict[str, Any]:
             "disable_web_page_preview": True,
         },
     )
-    slack = await invoke_from_state(
-        state,
-        "slack.notify",
-        {"text": slack_text, "mrkdwn": True, "unfurl_links": False},
-    )
+    # Only post to Slack on FAIL — PASS is Telegram-only to reduce noise
+    if failed_services:
+        slack = await invoke_from_state(
+            state,
+            "slack.notify",
+            {"text": slack_text, "mrkdwn": True, "unfurl_links": False},
+        )
+    else:
+        slack = {"status": "skipped"}
 
     state_accum = dict(state.get("state") or {})
     state_accum["smoke_runs_total"] = (
