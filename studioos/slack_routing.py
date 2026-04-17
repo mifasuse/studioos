@@ -148,27 +148,13 @@ def resolve_agent_from_mention(text: str, channel: str = "") -> str | None:
             return None
         candidate = parts[0].lower().rstrip(",:;.!?")
 
-        # Direct match in short names
-        if candidate in _AGENT_SHORT_NAMES:
-            agent_id = _AGENT_SHORT_NAMES[candidate]
-            # Verify studio matches channel
-            studio_channels = _parse_map(
-                getattr(settings, "slack_studio_channels", "")
-            )
-            for studio_id, ch_id in studio_channels.items():
-                if ch_id == channel:
-                    # Check agent belongs to this studio
-                    if studio_id == "amz" and agent_id.startswith("amz-"):
-                        return agent_id
-                    if studio_id == "app-studio" and agent_id.startswith("app-studio-"):
-                        return agent_id
-            # No channel match — return anyway (best effort)
-            return agent_id
-
-        # Try with studio prefix from channel
+        # Resolve via channel → studio prefix (priority: channel-aware)
         studio_channels = _parse_map(
             getattr(settings, "slack_studio_channels", "")
         )
+        all_agents = set(_AGENT_SHORT_NAMES.values())
+
+        # First: try channel-based prefix
         for studio_id, ch_id in studio_channels.items():
             if ch_id == channel:
                 if studio_id == "amz":
@@ -177,8 +163,12 @@ def resolve_agent_from_mention(text: str, channel: str = "") -> str | None:
                     full_id = f"app-studio-{candidate}"
                 else:
                     continue
-                if full_id in [a for a in _AGENT_SHORT_NAMES.values()]:
+                if full_id in all_agents:
                     return full_id
+
+        # Fallback: direct short name match (no channel context)
+        if candidate in _AGENT_SHORT_NAMES:
+            return _AGENT_SHORT_NAMES[candidate]
 
     return None
 
