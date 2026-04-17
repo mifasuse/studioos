@@ -106,7 +106,7 @@ agents:
     display_name: "Growth Intelligence"
     mode: normal
     heartbeat_config: {}
-    schedule_cron: "0 8 * * 1"
+    schedule_cron: "0 8 * * *"
     goals:
       tracked_apps: [quit_smoking, sms_forward]
       anomaly_thresholds:
@@ -139,7 +139,7 @@ agents:
     display_name: "App Studio CEO"
     mode: normal
     heartbeat_config: {}
-    schedule_cron: "0 9 * * 1"
+    schedule_cron: "0 9 * * *"
     goals:
       tracked_apps: [quit_smoking, sms_forward]
     tool_scope:
@@ -248,3 +248,17 @@ subscriptions:
   - subscriber: app-studio-qa
     event_pattern: "app.task.qa"
     priority: 20
+  # Cross-agent: anomaly → CEO + pricing immediately notified
+  - subscriber: app-studio-ceo
+    event_pattern: "app.growth.anomaly_detected"
+    priority: 10
+  - subscriber: app-studio-pricing
+    event_pattern: "app.growth.anomaly_detected"
+    priority: 15
+  # Cross-agent: QA fail → CEO + dev alerted
+  - subscriber: app-studio-ceo
+    event_pattern: "app.qa.failed"
+    priority: 10
+  - subscriber: app-studio-dev
+    event_pattern: "app.qa.failed"
+    priority: 10

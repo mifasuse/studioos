@@ -184,7 +184,7 @@ agents:
     display_name: "AMZ CEO"
     mode: normal
     heartbeat_config: {}
-    schedule_cron: "0 9 * * 1"
+    schedule_cron: "0 9 * * *"
     goals:
       llm_provider: minimax
     tool_scope:
@@ -330,3 +330,18 @@ subscriptions:
   - subscriber: amz-qa
     event_pattern: "amz.deploy.notification"
     priority: 10
+  # Cross-agent: QA fail → CEO + Dev alerted
+  - subscriber: amz-ceo
+    event_pattern: "amz.qa.smoke_failed"
+    priority: 10
+  - subscriber: amz-dev
+    event_pattern: "amz.qa.smoke_failed"
+    priority: 10
+  # Cross-agent: confirmed opportunity → pricer checks repricing
+  - subscriber: amz-pricer
+    event_pattern: "amz.opportunity.confirmed"
+    priority: 35
+  # Cross-agent: reprice done → crosslister checks eBay opportunity
+  - subscriber: amz-crosslister
+    event_pattern: "amz.reprice.recommended"
+    priority: 40
