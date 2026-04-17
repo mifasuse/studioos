@@ -101,7 +101,7 @@ async def _call_minimax(args: dict[str, Any]) -> dict[str, Any]:
     if args.get("response_format") == "json_object":
         body["response_format"] = {"type": "json_object"}
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             resp = await client.post(
                 f"{base_url}/chat/completions",
@@ -159,7 +159,7 @@ async def _call_anthropic(args: dict[str, Any]) -> dict[str, Any]:
     if "temperature" in args:
         body["temperature"] = float(args["temperature"])
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             resp = await client.post(
                 f"{base_url}/messages",
@@ -202,7 +202,7 @@ async def _call_openai(args: dict[str, Any]) -> dict[str, Any]:
     if args.get("response_format") == "json_object":
         body["response_format"] = {"type": "json_object"}
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             resp = await client.post(
                 f"{base_url}/chat/completions",
