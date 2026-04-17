@@ -279,6 +279,9 @@ agents:
       - exec.git_status
       - exec.git_log
       - exec.docker_compose_ps
+      - exec.git_commit
+      - exec.git_push
+      - exec.gh_workflow_dispatch
       - http.get_json
       - telegram.notify
       - slack.notify

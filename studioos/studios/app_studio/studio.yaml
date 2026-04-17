@@ -176,6 +176,10 @@ agents:
     tool_scope:
       - exec.git_status
       - exec.git_log
+      - exec.git_commit
+      - exec.git_push
+      - exec.gh_workflow_dispatch
+      - exec.codemagic_trigger
       - telegram.notify
       - slack.notify
       - memory.search
