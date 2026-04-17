@@ -221,7 +221,6 @@ agents:
     tool_scope:
       - ebaycrosslister.db.listable_items
       - ebaycrosslister.db.stranded_inventory
-      - ebaycrosslister.db.low_stock_listings
       - ebaycrosslister.api.create_draft
       - ebaycrosslister.api.publish_listing
       - pricefinder.db.crosslist_candidates

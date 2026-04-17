@@ -146,12 +146,11 @@ async def node_scan(state: CrossState) -> dict[str, Any]:
 
 
 async def node_scan_rules(state: CrossState) -> dict[str, Any]:
-    """CROSSLISTER.md rule scans — stranded inventory + low-stock listings.
+    """CROSSLISTER.md rule scans — stranded inventory only.
 
     Stranded items are the highest-priority cross-list candidates
-    (dead Amazon stock). Low-stock listings are active eBay listings
-    whose Amazon inventory has dropped below 3 — they need to be
-    paused before we oversell.
+    (dead Amazon stock). Low-stock monitoring is handled by Veeqo
+    (Amazon → eBay inventory sync), no StudioOS intervention needed.
     """
     goals = state.get("goals") or {}
     stranded_res = await invoke_from_state(
@@ -169,26 +168,7 @@ async def node_scan_rules(state: CrossState) -> dict[str, Any]:
             "amz_crosslister.stranded_failed", error=stranded_res.get("error")
         )
 
-    low_stock_res = await invoke_from_state(
-        state,
-        "ebaycrosslister.db.low_stock_listings",
-        {
-            "min_stock": int(goals.get("min_amazon_stock", 3)),
-            "limit": int(goals.get("low_stock_limit", 50)),
-        },
-    )
-    low_stock = (
-        (low_stock_res["data"] or {}).get("items") or []
-        if low_stock_res["status"] == "ok"
-        else []
-    )
-    if low_stock_res["status"] != "ok":
-        log.warning(
-            "amz_crosslister.low_stock_failed",
-            error=low_stock_res.get("error"),
-        )
-
-    return {"stranded": stranded, "low_stock": low_stock}
+    return {"stranded": stranded, "low_stock": []}
 
 
 def node_diff(state: CrossState) -> dict[str, Any]:
@@ -328,31 +308,11 @@ def _format_digest(items: list[dict[str, Any]]) -> str:
 
 async def node_emit(state: CrossState) -> dict[str, Any]:
     new_finds = state.get("new_finds") or []
-    low_stock = state.get("low_stock") or []
     events: list[dict[str, Any]] = []
     memories: list[dict[str, Any]] = []
     kpi_updates: list[dict[str, Any]] = []
     approvals: list[dict[str, Any]] = []
-
-    for row in low_stock:
-        approvals.append(
-            {
-                "reason": (
-                    f"Stop eBay listing — Amazon stock "
-                    f"{row.get('fulfillable_quantity', 0)} < 3 for "
-                    f"{row.get('asin')} (listing {row.get('listing_id')})"
-                ),
-                "payload": {
-                    "kind": "stop_listing_low_stock",
-                    "listing_id": row.get("listing_id"),
-                    "ebay_item_id": row.get("ebay_item_id"),
-                    "asin": row.get("asin"),
-                    "sku": row.get("sku"),
-                    "fulfillable_quantity": row.get("fulfillable_quantity"),
-                },
-                "expires_in_seconds": 60 * 60 * 6,
-            }
-        )
+    # Note: low_stock monitoring removed — Veeqo handles Amazon↔eBay stock sync
 
     for c in new_finds:
         events.append(
@@ -429,7 +389,7 @@ async def node_emit(state: CrossState) -> dict[str, Any]:
         {"name": "crosslist_new_per_run", "value": len(new_finds)}
     )
     kpi_updates.append(
-        {"name": "crosslist_low_stock_alerts", "value": len(low_stock)}
+        {"name": "crosslist_low_stock_alerts", "value": 0}  # Veeqo handles stock sync
     )
 
     return {
@@ -441,7 +401,7 @@ async def node_emit(state: CrossState) -> dict[str, Any]:
             f"{len(state.get('candidates') or [])} candidates, "
             f"{len(new_finds)} new "
             f"({len(state.get('stranded') or [])} stranded), "
-            f"{len(low_stock)} low-stock"
+            f"(Veeqo handles stock sync)"
             + (" (notified)" if notified else "")
         ),
     }
