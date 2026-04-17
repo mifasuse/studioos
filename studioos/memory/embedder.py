@@ -173,13 +173,7 @@ def get_embedder() -> Embedder:
     global _singleton
     if _singleton is not None:
         return _singleton
-    if settings.minimax_api_key and getattr(settings, "minimax_group_id", ""):
-        log.info("embedder.minimax")
-        _singleton = MiniMaxEmbedder(
-            api_key=settings.minimax_api_key,
-            group_id=settings.minimax_group_id,
-        )
-    elif settings.openai_api_key:
+    if settings.openai_api_key:
         log.info("embedder.openai")
         _singleton = OpenAIEmbedder(api_key=settings.openai_api_key)
     else:

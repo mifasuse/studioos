@@ -83,7 +83,10 @@ _JSON_FENCE_RE = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
 def parse_llm_response(text: str) -> dict[str, Any]:
     """Parse LLM output as tool call or plain text response.
 
-    Tool call: {"tool": "name", "args": {...}} (optionally in ```json fence)
+    Tool call formats handled:
+      1. Pure JSON: {"tool": "name", "args": {...}}
+      2. Markdown fence: ```json\n{"tool": ...}\n```
+      3. Mixed text + JSON: "some text\n{"tool": ...}"
     Anything else → plain text response.
     """
     candidate = text.strip()
@@ -93,21 +96,34 @@ def parse_llm_response(text: str) -> dict[str, Any]:
     if fence_match:
         candidate = fence_match.group(1).strip()
 
-    # Try JSON parse
+    # Try pure JSON parse first
     try:
         obj = json.loads(candidate)
+        if isinstance(obj, dict) and "tool" in obj:
+            return {
+                "type": "tool_call",
+                "tool": obj["tool"],
+                "args": obj.get("args", {}),
+            }
     except (json.JSONDecodeError, ValueError):
-        return {"type": "response", "text": text}
+        pass
 
-    # Must be an object with a "tool" key to be a tool call
-    if isinstance(obj, dict) and "tool" in obj:
-        return {
-            "type": "tool_call",
-            "tool": obj["tool"],
-            "args": obj.get("args", {}),
-        }
+    # Try finding JSON object embedded in text (LLM sometimes adds
+    # prose before the JSON: "Kontrol ediyorum...\n{"tool": ...}")
+    tool_idx = candidate.find('{"tool"')
+    if tool_idx >= 0:
+        tail = candidate[tool_idx:]
+        try:
+            obj = json.loads(tail)
+            if isinstance(obj, dict) and "tool" in obj:
+                return {
+                    "type": "tool_call",
+                    "tool": obj["tool"],
+                    "args": obj.get("args", {}),
+                }
+        except (json.JSONDecodeError, ValueError):
+            pass
 
-    # Valid JSON but not a tool call → plain response
     return {"type": "response", "text": text}
 
 

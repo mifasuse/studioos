@@ -26,6 +26,13 @@ def test_parse_json_in_markdown_fence() -> None:
     assert result["tool"] == "hub.api.overview"
 
 
+def test_parse_mixed_text_and_json() -> None:
+    text = 'Buy Box durumunu kontrol ediyorum...\n\n{"tool": "buyboxpricer.db.lost_buybox", "args": {}}'
+    result = parse_llm_response(text)
+    assert result["type"] == "tool_call"
+    assert result["tool"] == "buyboxpricer.db.lost_buybox"
+
+
 def test_parse_invalid_json_is_response() -> None:
     text = '{"broken json'
     result = parse_llm_response(text)
