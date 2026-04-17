@@ -67,9 +67,21 @@ async def node_collect(state: PricingState) -> dict[str, Any]:
     """Fetch Hub API countries, conversion, and mrr_history for the target app."""
     inp = state.get("input") or {}
     task_payload = inp.get("payload") or inp
-    app_id: str = task_payload.get("app_id") or (
-        (state.get("goals") or {}).get("app_id") or "unknown"
-    )
+    # Try multiple sources for app_id:
+    # 1. Direct in payload (from direct trigger)
+    # 2. In task description (CEO delegation: "quit_smoking fiyat analizi")
+    # 3. First tracked app from goals
+    # 4. Default quit_smoking
+    app_id: str = task_payload.get("app_id") or ""
+    if not app_id:
+        desc = (task_payload.get("description") or task_payload.get("title") or "").lower()
+        for candidate in ("quit_smoking", "sms_forward"):
+            if candidate.replace("_", " ") in desc or candidate in desc:
+                app_id = candidate
+                break
+    if not app_id:
+        tracked = (state.get("goals") or {}).get("tracked_apps") or []
+        app_id = tracked[0] if tracked else "quit_smoking"
 
     countries_result = await invoke_from_state(
         state, "hub.api.overview", {"app_id": app_id, "days": 30}

@@ -230,9 +230,8 @@ agents:
       - slack.notify
       - memory.search
 subscriptions:
-  - subscriber: app-studio-growth-exec
-    event_pattern: "app.growth.weekly_report"
-    priority: 30
+  # Growth Exec triggered by CEO delegation only (not weekly_report directly,
+  # to avoid duplicate runs when CEO also delegates after reading the report)
   - subscriber: app-studio-growth-exec
     event_pattern: "app.task.growth_exec"
     priority: 20
