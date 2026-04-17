@@ -144,5 +144,8 @@ class Settings(BaseSettings):
     # Comma-separated absolute repo paths the exec.* tools may read.
     dev_repo_allowlist: str = ""
 
+    # Codemagic CI/CD (M35)
+    codemagic_token: str = ""
+
 
 settings = Settings()
