@@ -218,16 +218,17 @@ async def node_load_context(state: ReactState) -> dict[str, Any]:
         except Exception as exc:
             log.warning("react_conversation.thread_history_error", error=str(exc)[:100])
 
-    # Load recent memories (OpenAI embedding active — no deadlock risk)
+    # Load recent memories — timeout protects against DB connection pool exhaustion
     memories: list[dict[str, Any]] = []
     try:
-        mem_result = await _invoke_unguarded(
-            state, "memory.search", {"query": user_message or agent_id, "limit": 5}
+        mem_result = await asyncio.wait_for(
+            _invoke_unguarded(state, "memory.search", {"query": user_message or agent_id, "limit": 5}),
+            timeout=10.0,
         )
         if mem_result.get("status") == "ok":
             memories = (mem_result.get("data") or {}).get("results") or (mem_result.get("data") or {}).get("items") or []
-    except Exception as exc:
-        log.warning("react_conversation.load_context.memory_error", error=str(exc)[:100])
+    except (asyncio.TimeoutError, Exception) as exc:
+        log.warning("react_conversation.load_context.memory_skip", error=str(exc)[:100])
 
     # Build initial messages list
     messages: list[dict[str, Any]] = [
