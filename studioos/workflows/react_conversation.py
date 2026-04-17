@@ -442,9 +442,15 @@ async def node_format_response(state: ReactState) -> dict[str, Any]:
             target_agent = _AGENT_SHORT_NAMES.get(target_short)
             if target_agent and target_agent != agent_id:
                 if check_cascade(thread_ts, target_agent, responding_agent_id=agent_id):
-                    # Extract the task text after the mention
+                    # Pass the FULL response as context + the specific task after mention
                     after = final_response[match.end():].strip()
-                    task_text = after.split("\n")[0][:200] if after else "devam et"
+                    task_line = after.split("\n")[0][:200] if after else ""
+                    # Include full response so the target agent has all data
+                    full_context = (
+                        f"{agent_id} diyor ki:\n"
+                        f"{final_response[:1500]}\n\n"
+                        f"Görev: {task_line or 'yukarıdaki verileri analiz et'}"
+                    )
                     try:
                         from studioos.runtime.trigger import trigger_run
                         await trigger_run(
@@ -456,8 +462,8 @@ async def node_format_response(state: ReactState) -> dict[str, Any]:
                                 "payload": {
                                     "agent_id": target_agent,
                                     "studio_id": state.get("studio_id", ""),
-                                    "text": f"{target_short} {task_text}",
-                                    "user": agent_id,  # source agent
+                                    "text": full_context,
+                                    "user": agent_id,
                                     "channel": channel,
                                     "thread_ts": thread_ts,
                                 },
