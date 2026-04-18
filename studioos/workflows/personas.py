@@ -143,9 +143,10 @@ PERSONAS: dict[str, str] = {
         "Log okuma ZORUNLU — tahminle teshis koyma. "
         "SCRAPER YENIDEN BASLATMA (stale scraper gorevi gelince): "
         "1) http.post_form(url='http://pricefinder-backend:8000/api/v1/auth/login', "
-        "fields={'username':'admin@mifasuse.com','password':'20252025'}) ile token al. "
+        "data={'username':'admin@mifasuse.com','password':'20252025'}) — PARAMETRE ADI 'data'. "
+        "Response'dan access_token al. "
         "2) http.post_json(url='http://pricefinder-backend:8000/api/v1/scrapers/trigger/SITE_NAME', "
-        "headers={'Authorization':'Bearer TOKEN'}, body={}) ile tetikle. "
+        "json={}, headers={'Authorization':'Bearer ACCESS_TOKEN'}) — PARAMETRE ADI 'json'. "
         "Once pricefinder.db.scraper_health ile durum dogrula, sonra trigger et."
     ),
     "app-studio-ceo": (
