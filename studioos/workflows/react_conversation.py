@@ -31,6 +31,19 @@ log = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 MAX_ITERATIONS = 25
+MAX_PARSE_RETRIES = 2
+
+# Markers that indicate LLM tried to emit a tool call but parser couldn't
+# extract valid JSON. When seen, we retry with a corrective prompt rather
+# than sending broken content to Slack.
+_TOOL_INTENT_MARKERS = ("[TOOL_CALL]", '{"tool"', '"tool":')
+
+
+def _looks_like_broken_tool_call(text: str) -> bool:
+    """Detect unparseable tool call attempts in LLM output."""
+    if not text:
+        return False
+    return any(m in text for m in _TOOL_INTENT_MARKERS)
 
 # Infrastructure tools the ReAct workflow needs regardless of agent's
 # tool_scope. These bypass the per-agent allow-list enforcement.
@@ -324,15 +337,22 @@ async def node_load_context(state: ReactState) -> dict[str, Any]:
 
 
 async def node_think(state: ReactState) -> dict[str, Any]:
-    """Call LLM with current messages, parse response."""
+    """Call LLM with current messages, parse response.
+
+    Uses low temperature (0.1) for deterministic tool call formatting.
+    On parse failure, retries up to MAX_PARSE_RETRIES with a corrective
+    system message before giving up.
+    """
     messages = list(state.get("messages") or [])
     observations = list(state.get("observations") or [])
     iteration = state.get("iteration") or 0
 
-    # Call LLM
+    # Call LLM with low temperature for stable tool call formatting
     try:
         llm_result = await _invoke_unguarded(
-            state, "llm.chat", {"messages": messages}
+            state,
+            "llm.chat",
+            {"messages": messages, "temperature": 0.1},
         )
         if llm_result.get("status") != "ok":
             # LLM call failed — treat as plain text response
@@ -344,6 +364,44 @@ async def node_think(state: ReactState) -> dict[str, Any]:
         raw_text = "Bir hata oluştu, lütfen tekrar deneyin."
 
     parsed = parse_llm_response(raw_text)
+
+    # If LLM tried to call a tool but we couldn't parse it, retry with a
+    # corrective system message (up to MAX_PARSE_RETRIES) before giving up.
+    if parsed["type"] == "response" and _looks_like_broken_tool_call(raw_text):
+        for retry in range(MAX_PARSE_RETRIES):
+            log.warning(
+                "react_conversation.think.parse_retry",
+                attempt=retry + 1,
+                raw_sample=raw_text[:150],
+            )
+            correction_msg = {
+                "role": "user",
+                "content": (
+                    "Tool call JSON bozuk geldi. Lütfen SADECE şu formatı "
+                    'kullan (başka metin, CLI-flag, dict list ekleme):\n'
+                    '{"tool": "tool_name", "args": {"param": "value"}}\n'
+                    "args alanındaki tüm değerler ÇIFT TIRNAKLI string "
+                    "olmalı. Cevabın sadece tek satır JSON olsun."
+                ),
+            }
+            retry_messages = messages + [
+                {"role": "assistant", "content": raw_text},
+                correction_msg,
+            ]
+            try:
+                retry_result = await _invoke_unguarded(
+                    state,
+                    "llm.chat",
+                    {"messages": retry_messages, "temperature": 0.0},
+                )
+                if retry_result.get("status") == "ok":
+                    raw_text = (retry_result.get("data") or {}).get("content", "")
+                    parsed = parse_llm_response(raw_text)
+                    if parsed["type"] == "tool_call":
+                        break
+            except Exception as exc:
+                log.warning("react_conversation.think.retry_error", error=str(exc))
+                continue
 
     if parsed["type"] == "tool_call":
         # Append assistant message + increment iteration
