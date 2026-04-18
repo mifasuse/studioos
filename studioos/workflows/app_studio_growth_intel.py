@@ -493,6 +493,82 @@ async def node_scan_opportunities(state: GrowthIntelState) -> dict[str, Any]:
     }
 
 
+IMPROVEMENT_SYSTEM_PROMPT = (
+    "Sen bir mobil uygulama ürün geliştirme danışmanısın. "
+    "Sana kullanıcı yorumları ve şikayetleri verilecek. "
+    "Her app için en kritik 3 iyileştirme önerisi sun: "
+    "1) Bug fix (varsa), 2) UX iyileştirme, 3) Yeni feature önerisi. "
+    "Kısa, somut, eyleme dönüştürülebilir. Türkçe yaz."
+)
+
+
+async def node_scan_improvements(state: GrowthIntelState) -> dict[str, Any]:
+    """Scan app store reviews + web for improvement suggestions on existing apps."""
+    goals = state.get("goals") or {}
+    tracked = goals.get("tracked_apps") or []
+    improvements: list[dict[str, Any]] = []
+
+    for app_id in tracked:
+        app_name = app_id.replace("_", " ")
+        # Search for user complaints and reviews
+        review_queries = [
+            f"{app_name} app review complaints",
+            f"{app_name} app 1 star review problems",
+        ]
+        review_signals: list[str] = []
+        for q in review_queries:
+            result = await invoke_from_state(
+                state, "web.search", {"query": q, "limit": 5}
+            )
+            if result.get("status") == "ok":
+                items = (result.get("data") or {}).get("results") or []
+                for item in items:
+                    snippet = item.get("snippet", "")
+                    if snippet:
+                        review_signals.append(snippet)
+
+        if review_signals:
+            import json
+            signals_text = json.dumps(review_signals[:15], ensure_ascii=False)[:2000]
+            llm_result = await invoke_from_state(
+                state,
+                "llm.chat",
+                {
+                    "messages": [
+                        {"role": "system", "content": IMPROVEMENT_SYSTEM_PROMPT},
+                        {"role": "user", "content": f"App: {app_id}\n\nKullanıcı yorumları:\n{signals_text}"},
+                    ],
+                    "max_tokens": 400,
+                    "temperature": 0.3,
+                },
+            )
+            if llm_result.get("status") == "ok":
+                suggestion = (llm_result.get("data") or {}).get("content", "")
+                improvements.append({"app_id": app_id, "suggestions": suggestion})
+
+    # Notify if improvements found
+    if improvements:
+        lines = ["*📱 Mevcut App İyileştirme Önerileri*\n"]
+        for imp in improvements:
+            lines.append(f"**{imp['app_id']}:**")
+            lines.append(imp["suggestions"][:500])
+            lines.append("")
+        text = "\n".join(lines)
+        await invoke_from_state(state, "slack.notify", {"text": text})
+
+        existing_memories = list(state.get("memories") or [])
+        existing_memories.append(
+            {
+                "content": f"Mevcut app iyileştirme önerileri: {len(improvements)} app analiz edildi",
+                "tags": ["app-studio", "improvements", "review-analysis"],
+                "importance": 0.6,
+            }
+        )
+        return {"memories": existing_memories}
+
+    return {}
+
+
 # ---------------------------------------------------------------------------
 # Graph
 # ---------------------------------------------------------------------------
@@ -507,8 +583,10 @@ def build_graph() -> Any:
     graph.add_edge(START, "collect")
     graph.add_edge("collect", "analyze")
     graph.add_edge("analyze", "report")
+    graph.add_node("scan_improvements", node_scan_improvements)
     graph.add_edge("report", "scan_opportunities")
-    graph.add_edge("scan_opportunities", END)
+    graph.add_edge("scan_opportunities", "scan_improvements")
+    graph.add_edge("scan_improvements", END)
     return graph.compile()
 
 
