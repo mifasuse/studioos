@@ -82,6 +82,17 @@ class ReactState(TypedDict, total=False):
 _JSON_FENCE_RE = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
 
 
+def _repair_json(raw: str) -> str:
+    """Append missing closing braces/brackets to make truncated JSON parseable."""
+    opens = raw.count("{") - raw.count("}")
+    open_brackets = raw.count("[") - raw.count("]")
+    fixed = raw.rstrip()
+    # Close arrays first, then objects (inner-to-outer)
+    fixed += "]" * max(0, open_brackets)
+    fixed += "}" * max(0, opens)
+    return fixed
+
+
 def parse_llm_response(text: str) -> dict[str, Any]:
     """Parse LLM output as tool call or plain text response.
 
@@ -117,21 +128,26 @@ def parse_llm_response(text: str) -> dict[str, Any]:
         if open_braces > 0:
             candidate = candidate + "}" * open_braces
 
-    # Handle [TOOL_CALL]{"tool": ...}[/TOOL_CALL] format (MiniMax style)
+    # Handle [TOOL_CALL]...[/TOOL_CALL] format (MiniMax style)
+    # LLM may produce truncated JSON — repair missing braces/brackets
+    # Match with or without closing tag (truncation tolerance)
     toolcall_match = re.search(
-        r'\[TOOL_CALL\]\s*(\{.*?\})\s*\[/TOOL_CALL\]', candidate, re.DOTALL
+        r'\[TOOL_CALL\](.*?)(?:\[/TOOL_CALL\]|$)', candidate, re.DOTALL
     )
     if toolcall_match:
-        try:
-            obj = json.loads(toolcall_match.group(1))
-            if isinstance(obj, dict) and "tool" in obj:
-                return {
-                    "type": "tool_call",
-                    "tool": obj["tool"],
-                    "args": obj.get("args", {}),
-                }
-        except (json.JSONDecodeError, ValueError):
-            pass
+        raw = toolcall_match.group(1).strip()
+        # Try as-is first
+        for attempt in (raw, _repair_json(raw)):
+            try:
+                obj = json.loads(attempt)
+                if isinstance(obj, dict) and "tool" in obj:
+                    return {
+                        "type": "tool_call",
+                        "tool": obj["tool"],
+                        "args": obj.get("args", {}),
+                    }
+            except (json.JSONDecodeError, ValueError):
+                continue
 
     # Try finding JSON object embedded in text (LLM sometimes adds
     # prose before the JSON: "Kontrol ediyorum...\n{"tool": ...}")
