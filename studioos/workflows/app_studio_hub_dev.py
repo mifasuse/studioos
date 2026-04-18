@@ -117,6 +117,18 @@ async def node_report(state: HubDevState) -> dict[str, Any]:
     total = snap.get("total_runs", 0)
     repos = snap.get("repos") or []
 
+    # Separate real errors from noise (None type = transient/empty errors)
+    real_failures = [f for f in failures if f.get("type")]
+    noise_failures = [f for f in failures if not f.get("type")]
+    failure_rate = len(failures) / max(1, total)
+
+    # Dirty/errored repos also warrant notification
+    dirty_repos = [r for r in repos if r.get("ok") and not r.get("clean")]
+    repo_errors = [r for r in repos if not r.get("ok")]
+
+    # Only notify on real failures, high failure rate, or dirty repos
+    should_notify = bool(real_failures) or failure_rate > 0.10 or bool(dirty_repos or repo_errors)
+
     if not failures:
         head = (
             f"*🔧 Hub Dev pulse* — son 6s: {total} run, *0 hata*. Hub sağlıklı."
@@ -124,72 +136,71 @@ async def node_report(state: HubDevState) -> dict[str, Any]:
     else:
         lines = [
             f"*🔧 Hub Dev pulse* — son 6s: {total} run, "
-            f"*{len(failures)} hata*"
+            f"*{len(real_failures)} hata*"
         ]
-        for f in failures[:5]:
+        if noise_failures:
+            lines[0] += f" (+{len(noise_failures)} geçici)"
+        for f in real_failures[:5]:
             lines.append(
                 f"• `{f['agent_id']}` — {f['type']}: {f['message'][:60]}"
             )
         head = "\n".join(lines)
 
     repo_lines: list[str] = []
-    if repos:
+    if dirty_repos or repo_errors:
         repo_lines.append("\n*Repo durumu:*")
-        for r in repos:
-            if not r.get("ok"):
-                repo_lines.append(
-                    f"• `{r['repo']}` — _err_ {(r.get('error') or '')[:60]}"
-                )
-                continue
-            mark = "✓ clean" if r.get("clean") else f"✗ {r.get('change_count', 0)} change"
-            repo_lines.append(f"• `{r['repo']}` — {mark}")
+        for r in repo_errors:
+            repo_lines.append(
+                f"• `{r['repo']}` — _err_ {(r.get('error') or '')[:60]}"
+            )
+        for r in dirty_repos:
+            repo_lines.append(
+                f"• `{r['repo']}` — ✗ {r.get('change_count', 0)} change"
+            )
 
     text = head
     if repo_lines:
         text += "\n" + "\n".join(repo_lines)
 
-    notify_tg = await invoke_from_state(
-        state,
-        "telegram.notify",
-        {
-            "text": text,
-            "parse_mode": "Markdown",
-            "disable_web_page_preview": True,
-        },
-    )
-    notify_slack = await invoke_from_state(
-        state,
-        "slack.notify",
-        {"text": text, "mrkdwn": True},
-    )
+    notify_tg = {"status": "skipped"}
+    notify_slack = {"status": "skipped"}
+    if should_notify:
+        notify_tg = await invoke_from_state(
+            state,
+            "telegram.notify",
+            {
+                "text": text,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True,
+            },
+        )
+        notify_slack = await invoke_from_state(
+            state,
+            "slack.notify",
+            {"text": text, "mrkdwn": True},
+        )
 
     state_accum = dict(state.get("state") or {})
     state_accum["pulses_total"] = int(state_accum.get("pulses_total", 0)) + 1
-
-    dirty_repos = [r for r in repos if r.get("ok") and not r.get("clean")]
 
     return {
         "memories": [
             {
                 "content": (
-                    f"Hub Dev pulse: {total} runs / {len(failures)} failures last 6h"
+                    f"Hub Dev pulse: {total} runs / {len(real_failures)} real failures last 6h"
                     + (f", {len(dirty_repos)} dirty repo(s)" if dirty_repos else "")
                 ),
                 "tags": ["app-studio", "hub", "dev", "pulse"],
-                "importance": 0.6 if failures or dirty_repos else 0.2,
+                "importance": 0.6 if real_failures or dirty_repos else 0.2,
             }
         ],
         "kpi_updates": [
-            {"name": "hub_dev_failures_last_6h", "value": len(failures)}
+            {"name": "hub_dev_failures_last_6h", "value": len(real_failures)}
         ],
         "state": state_accum,
         "summary": (
-            f"{total} runs, {len(failures)} failures"
-            + (
-                " (notified)"
-                if notify_tg["status"] == "ok" or notify_slack["status"] == "ok"
-                else ""
-            )
+            f"{total} runs, {len(real_failures)} real + {len(noise_failures)} transient"
+            + (" (notified)" if should_notify else "")
         ),
     }
 
