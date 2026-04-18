@@ -318,6 +318,10 @@ agents:
       - exec.git_push
       - exec.gh_workflow_dispatch
       - http.get_json
+      - http.post_json
+      - http.post_form
+      - pricefinder.db.scraper_health
+      - pricefinder.db.top_opportunities
       - telegram.notify
       - slack.notify
       - memory.search
