@@ -134,7 +134,11 @@ async def node_collect(state: QAState) -> dict[str, Any]:
                             .select_from(AgentRun)
                             .where(AgentRun.studio_id == studio_id)
                             .where(AgentRun.created_at >= since)
-                            .where(AgentRun.status == "failed")
+                            .where(
+                                AgentRun.state.in_(
+                                    ("failed", "timed_out", "dead", "budget_exceeded")
+                                )
+                            )
                         )
                     ).scalar_one()
                 )

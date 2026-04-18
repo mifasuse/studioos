@@ -31,33 +31,6 @@ _CHANNEL_NAME_PATTERNS: dict[str, str] = {
 }
 
 
-async def init_bot_user_map() -> None:
-    """Call auth.test for each agent bot token to learn its user_id."""
-    token_map = _parse_map(settings.slack_agent_tokens)
-    if not token_map:
-        log.warning("slack_routing.no_tokens", msg="STUDIOOS_SLACK_AGENT_TOKENS empty")
-        return
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        for agent_id, token in token_map.items():
-            try:
-                resp = await client.post(
-                    "https://slack.com/api/auth.test",
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data.get("ok"):
-                        uid = data["user_id"]
-                        _BOT_USER_MAP[uid] = agent_id
-                        _AGENT_BOT_MAP[agent_id] = uid
-                        log.info("slack_routing.mapped", agent_id=agent_id, user_id=uid)
-                    else:
-                        log.warning("slack_routing.auth_failed", agent_id=agent_id, error=data.get("error"))
-            except Exception as exc:
-                log.warning("slack_routing.error", agent_id=agent_id, error=str(exc))
-    log.info("slack_routing.ready", bot_count=len(_BOT_USER_MAP))
-
-
 _SINGLE_APP_BOT_UID: str | None = None  # set by init for single-app mode
 
 # Known agent short names → full agent_id (populated at startup)

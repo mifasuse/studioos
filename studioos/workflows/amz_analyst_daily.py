@@ -79,7 +79,8 @@ def node_score(state: DailyState) -> dict[str, Any]:
     exchange_rate = pf_settings.get("exchange_rate")
     for item in items:
         # Normalize field names: top_opportunities returns source_price/target_price
-        # but scoring expects tr_price/buybox_price
+        # but scoring expects tr_price/buybox_price. Copy to avoid in-place mutation.
+        item = {**item}
         if "source_price" in item and "tr_price" not in item:
             item["tr_price"] = item["source_price"]
         if "target_price" in item and "buybox_price" not in item:
