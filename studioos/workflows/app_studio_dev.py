@@ -115,6 +115,14 @@ async def node_report(state: AppDevState) -> dict[str, Any]:
     total = snap.get("total_runs", 0)
     repos = snap.get("repos") or []
 
+    # Separate real errors from noise (None type = transient/empty errors)
+    real_failures = [f for f in failures if f.get("type")]
+    noise_failures = [f for f in failures if not f.get("type")]
+    failure_rate = len(failures) / max(1, total)
+
+    # Only notify on real errors or high failure rate (>10%)
+    should_notify = bool(real_failures) or failure_rate > 0.10
+
     if not failures:
         head = (
             f"*🛠 App Studio Dev pulse* — son 60dk: {total} run, *0 hata*. Sistem yeşil."
@@ -122,32 +130,36 @@ async def node_report(state: AppDevState) -> dict[str, Any]:
     else:
         lines = [
             f"*🛠 App Studio Dev pulse* — son 60dk: {total} run, "
-            f"*{len(failures)} hata*"
+            f"*{len(real_failures)} hata*"
         ]
-        for f in failures[:5]:
+        if noise_failures:
+            lines[0] += f" (+{len(noise_failures)} geçici)"
+        for f in real_failures[:5]:
             lines.append(
                 f"• `{f['agent_id']}` — {f['type']}: {f['message'][:60]}"
             )
         head = "\n".join(lines)
 
     repo_lines: list[str] = []
-    if repos:
+    dirty_repos_display = [r for r in repos if r.get("ok") and not r.get("clean")]
+    repo_errors = [r for r in repos if not r.get("ok")]
+    if dirty_repos_display or repo_errors:
         repo_lines.append("\n*Repo durumu:*")
-        for r in repos:
-            if not r.get("ok"):
-                repo_lines.append(
-                    f"• `{r['repo']}` — _err_ {(r.get('error') or '')[:60]}"
-                )
-                continue
-            mark = "✓ clean" if r.get("clean") else f"✗ {r.get('change_count', 0)} change"
-            repo_lines.append(f"• `{r['repo']}` — {mark}")
+        for r in repo_errors:
+            repo_lines.append(
+                f"• `{r['repo']}` — _err_ {(r.get('error') or '')[:60]}"
+            )
+        for r in dirty_repos_display:
+            repo_lines.append(
+                f"• `{r['repo']}` — ✗ {r.get('change_count', 0)} change"
+            )
 
     text = head
     if repo_lines:
         text += "\n" + "\n".join(repo_lines)
 
-    # Only notify on failures — silent when all green
-    if failures:
+    # Only notify on real failures or high failure rate — silent otherwise
+    if should_notify:
         await invoke_from_state(
             state,
             "telegram.notify",
@@ -184,12 +196,9 @@ async def node_report(state: AppDevState) -> dict[str, Any]:
         ],
         "state": state_accum,
         "summary": (
-            f"{total} runs, {len(failures)} failures"
-            + (
-                " (notified)"
-                if failures
-                else ""
-            )
+            f"{total} runs, {len(real_failures)} real + "
+            f"{len(noise_failures)} transient failures"
+            + (" (notified)" if should_notify else "")
         ),
     }
 

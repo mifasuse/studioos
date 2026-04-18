@@ -156,6 +156,18 @@ async def node_report(state: DevState) -> dict[str, Any]:
     repos = snap.get("repos") or []
     alembic = snap.get("alembic") or []
 
+    # Separate real errors (with error type) from noise (None type — usually
+    # transient timeouts or empty error objects that aren't actionable).
+    real_failures = [f for f in failures if f.get("type")]
+    noise_failures = [f for f in failures if not f.get("type")]
+    failure_rate = len(failures) / max(1, total)
+
+    # Decide whether this pulse warrants a notification:
+    #   - Real errors with actual error types → always notify
+    #   - High failure rate (>10%) even if types are None → notify
+    #   - Only noise failures at low rate → silent, just log KPIs
+    should_notify = bool(real_failures) or failure_rate > 0.10
+
     if not failures:
         head = (
             f"*🛠 AMZ Dev pulse* — son 60dk: {total} run, *0 hata*. Sistem yeşil."
@@ -163,25 +175,29 @@ async def node_report(state: DevState) -> dict[str, Any]:
     else:
         lines = [
             f"*🛠 AMZ Dev pulse* — son 60dk: {total} run, "
-            f"*{len(failures)} hata*"
+            f"*{len(real_failures)} hata*"
         ]
-        for f in failures[:5]:
+        if noise_failures:
+            lines[0] += f" (+{len(noise_failures)} geçici)"
+        for f in real_failures[:5]:
             lines.append(
                 f"• `{f['agent_id']}` — {f['type']}: {f['message'][:60]}"
             )
         head = "\n".join(lines)
 
     repo_lines: list[str] = []
-    if repos:
+    dirty_repos = [r for r in repos if r.get("ok") and not r.get("clean")]
+    repo_errors = [r for r in repos if not r.get("ok")]
+    if dirty_repos or repo_errors:
         repo_lines.append("\n*Repo durumu:*")
-        for r in repos:
-            if not r.get("ok"):
-                repo_lines.append(
-                    f"• `{r['repo']}` — _err_ {(r.get('error') or '')[:60]}"
-                )
-                continue
-            mark = "✓ clean" if r.get("clean") else f"✗ {r.get('change_count', 0)} change"
-            repo_lines.append(f"• `{r['repo']}` — {mark}")
+        for r in repo_errors:
+            repo_lines.append(
+                f"• `{r['repo']}` — _err_ {(r.get('error') or '')[:60]}"
+            )
+        for r in dirty_repos:
+            repo_lines.append(
+                f"• `{r['repo']}` — ✗ {r.get('change_count', 0)} change"
+            )
 
     alembic_lines: list[str] = []
     drifted = [a for a in alembic if not a.get("ok")]
@@ -198,8 +214,8 @@ async def node_report(state: DevState) -> dict[str, Any]:
     if alembic_lines:
         text += "\n" + "\n".join(alembic_lines)
 
-    # Only notify on failures — silent when all green
-    if failures:
+    # Only notify on real failures or high failure rate — silent otherwise
+    if should_notify:
         await invoke_from_state(
             state,
             "telegram.notify",
@@ -237,12 +253,9 @@ async def node_report(state: DevState) -> dict[str, Any]:
         ],
         "state": state_accum,
         "summary": (
-            f"{total} runs, {len(failures)} failures"
-            + (
-                " (notified)"
-                if failures
-                else ""
-            )
+            f"{total} runs, {len(real_failures)} real + "
+            f"{len(noise_failures)} transient failures"
+            + (" (notified)" if should_notify else "")
         ),
     }
 
