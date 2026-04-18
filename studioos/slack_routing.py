@@ -34,7 +34,14 @@ _CHANNEL_NAME_PATTERNS: dict[str, str] = {
 _SINGLE_APP_BOT_UID: str | None = None  # set by init for single-app mode
 
 # Known agent short names → full agent_id (populated at startup)
+# NOTE: when short names collide (e.g. 'ceo' exists in both studios),
+# last-write-wins. Use _KNOWN_AGENTS for authoritative membership tests.
 _AGENT_SHORT_NAMES: dict[str, str] = {}
+
+# Full set of known agent IDs (populated at startup) — used for membership
+# tests so that channel-based routing can find amz-ceo even when 'ceo'
+# short name is bound to app-studio-ceo in _AGENT_SHORT_NAMES.
+_KNOWN_AGENTS: set[str] = set()
 
 
 async def init_bot_user_map() -> None:
@@ -63,6 +70,7 @@ async def init_bot_user_map() -> None:
         "amz-analyst-daily",
     ]
     for aid in _known_agents:
+        _KNOWN_AGENTS.add(aid)
         # Short names: "pricer", "scout", "ceo", "growth-intel", etc.
         for prefix in ("amz-", "app-studio-"):
             if aid.startswith(prefix):
@@ -209,7 +217,9 @@ def resolve_agent_from_mention(text: str, channel: str = "") -> str | None:
         if not parts:
             return None
         candidate = parts[0].lower().rstrip(",:;.!?")
-        all_agents = set(_AGENT_SHORT_NAMES.values())
+        # Use _KNOWN_AGENTS (full set) not _AGENT_SHORT_NAMES.values()
+        # because short-name map has last-write-wins collisions.
+        all_agents = _KNOWN_AGENTS
 
         # First: try channel-based prefix (auto-discovered or configured)
         # If channel not in map yet, try to resolve it on-the-fly
