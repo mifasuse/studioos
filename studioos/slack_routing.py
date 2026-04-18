@@ -149,6 +149,43 @@ async def init_bot_user_map() -> None:
     )
 
 
+def _resolve_channel_studio(channel_id: str) -> str | None:
+    """Resolve channel_id → studio_id on-the-fly via conversations.info.
+
+    Called when a channel isn't in _CHANNEL_STUDIO_MAP yet (bot wasn't a
+    member at startup, or conversations.list missed it). Result is cached.
+    """
+    bot_token = settings.slack_bot_token
+    if not bot_token:
+        return None
+    try:
+        import httpx as _httpx
+        # Sync call — we're in a sync function context. Use a short timeout.
+        with _httpx.Client(timeout=5.0) as client:
+            resp = client.get(
+                "https://slack.com/api/conversations.info",
+                params={"channel": channel_id},
+                headers={"Authorization": f"Bearer {bot_token}"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("ok"):
+                    ch_name = (data.get("channel") or {}).get("name", "").lower()
+                    for pattern, studio_id in _CHANNEL_NAME_PATTERNS.items():
+                        if ch_name.startswith(pattern):
+                            _CHANNEL_STUDIO_MAP[channel_id] = studio_id
+                            log.info(
+                                "slack_routing.channel_resolved",
+                                channel=ch_name,
+                                channel_id=channel_id,
+                                studio_id=studio_id,
+                            )
+                            return studio_id
+    except Exception as exc:
+        log.warning("slack_routing.channel_resolve_error", error=str(exc)[:100])
+    return None
+
+
 def resolve_agent_from_mention(text: str, channel: str = "") -> str | None:
     """Route a mention to an agent_id.
 
@@ -175,7 +212,11 @@ def resolve_agent_from_mention(text: str, channel: str = "") -> str | None:
         all_agents = set(_AGENT_SHORT_NAMES.values())
 
         # First: try channel-based prefix (auto-discovered or configured)
+        # If channel not in map yet, try to resolve it on-the-fly
         studio_id = _CHANNEL_STUDIO_MAP.get(channel)
+        if studio_id is None and channel:
+            studio_id = _resolve_channel_studio(channel)
+
         if studio_id:
             if studio_id == "amz":
                 full_id = f"amz-{candidate}"
