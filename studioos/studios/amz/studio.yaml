@@ -299,6 +299,8 @@ agents:
     tool_scope:
       - exec.git_status
       - exec.git_log
+      - exec.read_file
+      - exec.list_dir
       - exec.docker_compose_ps
       - exec.git_commit
       - exec.git_push

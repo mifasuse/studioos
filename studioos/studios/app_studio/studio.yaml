@@ -186,6 +186,8 @@ agents:
     tool_scope:
       - exec.git_status
       - exec.git_log
+      - exec.read_file
+      - exec.list_dir
       - exec.git_commit
       - exec.git_push
       - exec.gh_workflow_dispatch

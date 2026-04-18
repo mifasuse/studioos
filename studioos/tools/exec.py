@@ -128,6 +128,88 @@ async def exec_git_status(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
 
 
 @register_tool(
+    "exec.read_file",
+    description=(
+        "Read a text file from an allow-listed repo. "
+        "Returns first 10KB of content. Read-only."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "Allow-listed repo path"},
+            "path": {"type": "string", "description": "Relative path within repo"},
+        },
+        "required": ["repo", "path"],
+        "additionalProperties": False,
+    },
+    requires_network=False,
+    category="exec",
+    cost_cents=0,
+)
+async def exec_read_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    repo = _check_repo(args["repo"])
+    rel_path = args["path"].lstrip("/")
+    full_path = Path(repo) / rel_path
+    # Prevent path traversal
+    resolved = full_path.resolve()
+    if not str(resolved).startswith(repo):
+        raise ToolError(f"path {rel_path!r} escapes repo")
+    if not resolved.exists():
+        return ToolResult(data={"exists": False, "path": rel_path})
+    if not resolved.is_file():
+        raise ToolError(f"{rel_path} is not a file")
+    # Read first 10KB only
+    try:
+        content = resolved.read_text(encoding="utf-8", errors="replace")[:10240]
+    except Exception as exc:
+        raise ToolError(f"read failed: {exc}")
+    return ToolResult(
+        data={
+            "exists": True,
+            "path": rel_path,
+            "content": content,
+            "size_bytes": resolved.stat().st_size,
+        }
+    )
+
+
+@register_tool(
+    "exec.list_dir",
+    description=(
+        "List files/directories in a path within an allow-listed repo. "
+        "Read-only."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string"},
+            "path": {"type": "string", "default": "."},
+        },
+        "required": ["repo"],
+        "additionalProperties": False,
+    },
+    requires_network=False,
+    category="exec",
+    cost_cents=0,
+)
+async def exec_list_dir(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    repo = _check_repo(args["repo"])
+    rel_path = args.get("path", ".").lstrip("/") or "."
+    full_path = (Path(repo) / rel_path).resolve()
+    if not str(full_path).startswith(repo):
+        raise ToolError(f"path {rel_path!r} escapes repo")
+    if not full_path.exists() or not full_path.is_dir():
+        return ToolResult(data={"exists": False, "path": rel_path})
+    entries = []
+    for item in sorted(full_path.iterdir())[:100]:
+        entries.append({
+            "name": item.name,
+            "type": "dir" if item.is_dir() else "file",
+        })
+    return ToolResult(data={"exists": True, "path": rel_path, "entries": entries})
+
+
+@register_tool(
     "exec.git_log",
     description=(
         "Run `git log -n LIMIT --oneline` in an allow-listed repo. "
