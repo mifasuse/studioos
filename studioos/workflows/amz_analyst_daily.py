@@ -191,11 +191,21 @@ async def node_report(state: DailyState) -> dict[str, Any]:
         "slack.notify",
         {"text": text, "mrkdwn": True, "unfurl_links": False},
     )
+    # Truncate at item boundaries for Telegram (4096 char limit, use 3500 safe)
+    tg_text = text
+    if len(tg_text) > 3500:
+        # Find the last complete item (items start with "• ")
+        cut = tg_text.rfind("\n• ", 0, 3500)
+        if cut > 0:
+            tg_text = tg_text[:cut] + "\n\n_...kalan öğeler kesildi_"
+        else:
+            tg_text = tg_text[:3500]
+
     tg_res = await invoke_from_state(
         state,
         "telegram.notify",
         {
-            "text": text[:3500],
+            "text": tg_text,
             "parse_mode": "Markdown",
             "disable_web_page_preview": True,
         },

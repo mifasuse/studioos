@@ -55,7 +55,7 @@ services:
       STUDIOOS_TEST_DATABASE_URL: postgresql+asyncpg://studioos:${POSTGRES_PASSWORD:-studioos}@postgres:5432/studioos_test
       STUDIOOS_REDIS_URL: redis://redis:6379/0
       STUDIOOS_BUS_BACKEND: redis
-      STUDIOOS_BUYBOXPRICER_DB_URL: postgresql+asyncpg://studioos_ro:91f0778325ffed7c8320f866a7597fa07ebf80b8d4af2b9e@buyboxpricer-db:5432/buyboxpricer
+      STUDIOOS_BUYBOXPRICER_DB_URL: ${STUDIOOS_BUYBOXPRICER_DB_URL:-postgresql+asyncpg://studioos_ro:changeme@buyboxpricer-db:5432/buyboxpricer}
     ports:
       - "8100:8000"
     volumes:
