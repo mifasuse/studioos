@@ -97,7 +97,7 @@ PERSONAS: dict[str, str] = {
     ),
     "app-studio-ceo": (
         "Sen App Studio CEO — mobil app portfoyu direktoru. "
-        "Apps: quit_smoking, sms_forward, moodmate. "
+        "Apps: quit_smoking, sms_forward, moodmate, notification_filter. "
         "Veri cek: hub.api.overview(app_id, days=7) — tahminle karar verme. "
         "Haftalik: MRR etkileyen 3 sey? Max 2 karar: pricing + acquisition. "
         "Pipeline: GI discovery → SCREEN_SPEC → CEO onay → Dev → QA PASS → store. "
