@@ -379,6 +379,73 @@ async def pricefinder_db_global_settings(
     )
 
 
+_SCRAPER_HEALTH_SQL = text(
+    """
+    SELECT
+        tr_source,
+        COUNT(*) AS product_count,
+        MAX(updated_at) AS last_scrape,
+        MIN(updated_at) AS oldest_scrape,
+        COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours') AS fresh_24h,
+        COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '7 days') AS fresh_7d
+    FROM products
+    WHERE tr_source IS NOT NULL
+    GROUP BY tr_source
+    ORDER BY last_scrape DESC NULLS LAST
+    """
+)
+
+
+@register_tool(
+    "pricefinder.db.scraper_health",
+    description=(
+        "Summarize scraper health per TR site: product count, last scrape time, "
+        "how many products updated in last 24h/7d. Use this to check which "
+        "Turkish-site scrapers are running and which are stale."
+    ),
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+    requires_network=True,
+    category="amz",
+    cost_cents=0,
+)
+async def pricefinder_db_scraper_health(
+    args: dict[str, Any], ctx: ToolContext
+) -> ToolResult:
+    engine = _pf_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(_SCRAPER_HEALTH_SQL)
+        rows = [dict(r) for r in result.mappings()]
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        items.append(
+            {
+                "source": row["tr_source"],
+                "product_count": int(row["product_count"] or 0),
+                "last_scrape": (
+                    row["last_scrape"].isoformat() if row.get("last_scrape") else None
+                ),
+                "oldest_scrape": (
+                    row["oldest_scrape"].isoformat() if row.get("oldest_scrape") else None
+                ),
+                "fresh_24h": int(row["fresh_24h"] or 0),
+                "fresh_7d": int(row["fresh_7d"] or 0),
+                "stale": (
+                    row["fresh_24h"] == 0 if row.get("last_scrape") else True
+                ),
+            }
+        )
+    stale = [i for i in items if i["stale"]]
+    return ToolResult(
+        data={
+            "sources": items,
+            "total_sources": len(items),
+            "stale_sources": len(stale),
+            "stale_source_names": [s["source"] for s in stale],
+        }
+    )
+
+
 _TOP_OPPS_SQL = text(
     """
     SELECT

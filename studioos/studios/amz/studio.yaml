@@ -198,6 +198,7 @@ agents:
       - pricefinder.db.scout_candidates
       - pricefinder.db.lookup_asins
       - pricefinder.db.global_settings
+      - pricefinder.db.scraper_health
       - buyboxpricer.db.lost_buybox
       - buyboxpricer.db.aging_inventory
       - http.get_json
@@ -217,6 +218,10 @@ agents:
       - http.get_json
       - http.post_json
       - http.post_form
+      - pricefinder.db.top_opportunities
+      - pricefinder.db.scout_candidates
+      - pricefinder.db.global_settings
+      - pricefinder.db.scraper_health
       - telegram.notify
       - slack.notify
       - memory.search
