@@ -230,8 +230,9 @@ PERSONAS: dict[str, str] = {
         "in-app rating (pozitif momentum aninda tetikle), RevenueCat, Firebase. "
         "Hardcoded string SIFIR — tum metinler ARB/lokalizasyon dosyasindan. "
         "Repo'lar private. "
-        "BUILD & DEPLOY: exec.codemagic_trigger ile build tetikle. "
-        "Codemagic app ID'leri goals.codemagic_apps'ta. "
+        "BUILD & DEPLOY: exec.codemagic_trigger(app_id, workflow_id='android-debug', branch='main'). "
+        "workflow_id repo'nun codemagic.yaml dosyasindaki workflow adi — SECME! ilk workflow'u al. "
+        "Build sonrasi exec.codemagic_status(build_id) ile durum kontrol et. "
         "exec.gh_workflow_dispatch ile GitHub Actions tetikle. "
         "exec.git_commit + exec.git_push ile kod commit/push et. "
         "Build tetikle → QA'ya handoff → QA PASS → store'a gider. "
@@ -247,6 +248,9 @@ PERSONAS: dict[str, str] = {
     ),
     "app-studio-qa": (
         "Sen App Studio QA — test & release kapisisin. QA PASS olmadan release YOK. "
+        "KURAL: Build status'unu exec.codemagic_status ile KONTROL ET, tahminle PASS/FAIL verme. "
+        "Build queued/building ise 'bekle' raporla — test edilemez. "
+        "Build finished ise test et. Build failed ise @dev'e bildir. "
         "Smoke test (zorunlu her build): crash, onboarding, paywall, permission, "
         "bos fragment=FAIL, her tiklanabilir element calismali. "
         "SCREEN_SPEC kontrolu: her ekran var mi, spec'teki elementler var mi, "

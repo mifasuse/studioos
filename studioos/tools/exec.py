@@ -468,7 +468,9 @@ async def exec_gh_workflow_dispatch(args: dict[str, Any], ctx: ToolContext) -> T
     "exec.codemagic_trigger",
     description=(
         "Trigger a Codemagic build via the REST API. "
-        "Requires STUDIOOS_CODEMAGIC_TOKEN to be set."
+        "If the repo has codemagic.yaml, workflow_id must match a "
+        "workflow name from that file (e.g. 'android-debug'). "
+        "Requires STUDIOOS_CODEMAGIC_TOKEN."
     ),
     input_schema={
         "type": "object",
@@ -477,13 +479,20 @@ async def exec_gh_workflow_dispatch(args: dict[str, Any], ctx: ToolContext) -> T
                 "type": "string",
                 "description": "Codemagic application ID",
             },
+            "workflow_id": {
+                "type": "string",
+                "description": (
+                    "Workflow name from codemagic.yaml "
+                    "(e.g. 'android-debug', 'ios-release')"
+                ),
+            },
             "branch": {
                 "type": "string",
                 "default": "main",
                 "description": "Branch to build",
             },
         },
-        "required": ["app_id"],
+        "required": ["app_id", "workflow_id"],
         "additionalProperties": False,
     },
     requires_network=True,
@@ -494,6 +503,7 @@ async def exec_codemagic_trigger(args: dict[str, Any], ctx: ToolContext) -> Tool
     import urllib.request
 
     app_id: str = args["app_id"]
+    workflow_id: str = args["workflow_id"]
     branch: str = args.get("branch", "main") or "main"
 
     token = settings.codemagic_token
@@ -503,7 +513,7 @@ async def exec_codemagic_trigger(args: dict[str, Any], ctx: ToolContext) -> Tool
         )
 
     payload = _json.dumps(
-        {"appId": app_id, "workflowId": "default", "branch": branch}
+        {"appId": app_id, "workflowId": workflow_id, "branch": branch}
     ).encode()
 
     req = urllib.request.Request(
@@ -539,5 +549,67 @@ async def exec_codemagic_trigger(args: dict[str, Any], ctx: ToolContext) -> Tool
         data={
             "build_id": build_id,
             "status": status,
+        }
+    )
+
+
+@register_tool(
+    "exec.codemagic_status",
+    description=(
+        "Get the status of a Codemagic build by ID. "
+        "Returns status (queued/building/finished/failed/canceled), "
+        "startedAt, finishedAt, and artifactsUrl. Use to verify build "
+        "completion before declaring QA PASS/FAIL."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "build_id": {
+                "type": "string",
+                "description": "Codemagic build ID (from trigger response)",
+            },
+        },
+        "required": ["build_id"],
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="exec",
+    cost_cents=0,
+)
+async def exec_codemagic_status(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    import urllib.request
+
+    build_id: str = args["build_id"]
+    token = settings.codemagic_token
+    if not token:
+        raise ToolError("STUDIOOS_CODEMAGIC_TOKEN is not configured")
+
+    req = urllib.request.Request(
+        f"https://api.codemagic.io/builds/{build_id}",
+        headers={"x-auth-token": token},
+    )
+    loop = asyncio.get_event_loop()
+    try:
+        body = await loop.run_in_executor(
+            None,
+            lambda: urllib.request.urlopen(req, timeout=15).read(),
+        )
+    except urllib.request.HTTPError as exc:
+        raise ToolError(f"Codemagic status error {exc.code}: {exc.read()[:200]}")
+
+    data = _json.loads(body)
+    build = data.get("build", {}) if isinstance(data, dict) else {}
+    return ToolResult(
+        data={
+            "build_id": build_id,
+            "status": build.get("status", "unknown"),
+            "started_at": build.get("startedAt"),
+            "finished_at": build.get("finishedAt"),
+            "workflow_id": build.get("workflowId"),
+            "branch": build.get("branch"),
+            "message": build.get("message"),
+            "app_name": (build.get("application") or {}).get("appName")
+            if isinstance(build.get("application"), dict)
+            else None,
         }
     )

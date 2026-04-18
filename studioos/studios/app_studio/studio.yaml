@@ -180,9 +180,15 @@ agents:
         - /home/deployer/openclaw/workspace/workspace/studios/app-studio/projects/moodmate
         - /home/deployer/openclaw/workspace/workspace/studios/app-studio/projects/notification_filter
       codemagic_apps:
-        quit_smoking_now: "69c0186211a3275017fb6926"
-        sms_forward: "69c1a987c18c3eee6b5c64f8"
-        notification_filter: "69c76843b8d0d6c344bbaa25"
+        quit_smoking_now:
+          app_id: "69c0186211a3275017fb6926"
+          workflows: [ios-testflight, ios-appstore]
+        sms_forward:
+          app_id: "69c1a987c18c3eee6b5c64f8"
+          workflows: [android-debug, android-release]
+        notification_filter:
+          app_id: "69c76843b8d0d6c344bbaa25"
+          workflows: [android-debug]
     tool_scope:
       - exec.git_status
       - exec.git_log
@@ -192,6 +198,7 @@ agents:
       - exec.git_push
       - exec.gh_workflow_dispatch
       - exec.codemagic_trigger
+      - exec.codemagic_status
       - telegram.notify
       - slack.notify
       - memory.search
@@ -207,6 +214,9 @@ agents:
       failure_rate_threshold: 20.0
     tool_scope:
       - hub.api.overview
+      - exec.codemagic_status
+      - exec.read_file
+      - exec.list_dir
       - telegram.notify
       - slack.notify
       - memory.search
