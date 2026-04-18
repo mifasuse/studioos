@@ -194,6 +194,13 @@ agents:
       llm_provider: minimax
     tool_scope:
       - llm.chat
+      - pricefinder.db.top_opportunities
+      - pricefinder.db.scout_candidates
+      - pricefinder.db.lookup_asins
+      - pricefinder.db.global_settings
+      - buyboxpricer.db.lost_buybox
+      - buyboxpricer.db.aging_inventory
+      - http.get_json
       - telegram.notify
       - slack.notify
       - memory.search
