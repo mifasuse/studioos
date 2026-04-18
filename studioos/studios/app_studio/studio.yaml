@@ -179,6 +179,10 @@ agents:
         - /home/deployer/openclaw/workspace/workspace/studios/app-studio/projects/sms_forward
         - /home/deployer/openclaw/workspace/workspace/studios/app-studio/projects/moodmate
         - /home/deployer/openclaw/workspace/workspace/studios/app-studio/projects/notification_filter
+      codemagic_apps:
+        quit_smoking_now: "69c0186211a3275017fb6926"
+        sms_forward: "69c1a987c18c3eee6b5c64f8"
+        notification_filter: "69c76843b8d0d6c344bbaa25"
     tool_scope:
       - exec.git_status
       - exec.git_log
