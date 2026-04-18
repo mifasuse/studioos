@@ -186,8 +186,13 @@ async def node_load_context(state: ReactState) -> dict[str, Any]:
     agent_id = state.get("agent_id", "")
     tool_scope = list(state.get("tool_scope") or [])
 
-    # Build system prompt
+    # Build system prompt with goals context
     system_prompt = build_system_prompt(agent_id, tool_scope)
+    goals = state.get("goals") or {}
+    if goals:
+        import json as _json
+        goals_str = _json.dumps(goals, ensure_ascii=False, default=str)[:1000]
+        system_prompt += f"\n\n## Mevcut Görev Ayarları\n{goals_str}"
 
     # Load thread history for multi-turn context (Slack only)
     thread_history: list[dict[str, str]] = []
