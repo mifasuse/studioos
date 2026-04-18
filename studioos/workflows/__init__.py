@@ -7,6 +7,7 @@ from __future__ import annotations
 from studioos.workflows import (  # noqa: F401
     amz_admanager,
     amz_analyst,
+    amz_analyst_daily,
     amz_ceo,
     amz_crosslister,
     amz_dev,

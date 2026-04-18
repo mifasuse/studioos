@@ -100,14 +100,62 @@ class Risk(TypedDict):
     total: int
 
 
-def compute_risk(product: dict[str, Any]) -> Risk:
+def _fx_risk_from_rate(exchange_rate: float | None) -> int:
+    """Estimate FX risk from TRY/USD exchange rate level.
+
+    Higher exchange rate = weaker TRY = more volatile historically.
+    Thresholds calibrated for 2024-2026 TRY/USD range (~28-38):
+      - rate < 30  → 2 (relatively stable zone)
+      - rate 30-33 → 3 (moderate)
+      - rate 33-36 → 4 (elevated volatility)
+      - rate >= 36 → 5 (high risk, TRY weakening fast)
+
+    If no rate is available, default to 3 (neutral).
+    """
+    if exchange_rate is None or exchange_rate <= 0:
+        return 3
+    if exchange_rate < 30:
+        return 2
+    if exchange_rate < 33:
+        return 3
+    if exchange_rate < 36:
+        return 4
+    return 5
+
+
+def _category_risk_from_product(product: dict[str, Any]) -> int:
+    """Estimate category risk from product signals.
+
+    Uses category/product_group if available + gated category indicators.
+    """
+    cat = (product.get("category") or product.get("product_group") or "").lower()
+    # Known restricted/gated categories on Amazon US
+    gated_keywords = {
+        "grocery", "food", "topical", "beauty", "health",
+        "personal care", "dietary", "supplement", "pesticide",
+        "alcohol", "tobacco", "weapon", "hazmat",
+    }
+    if any(kw in cat for kw in gated_keywords):
+        return 4
+    is_gated = product.get("is_gated") or product.get("gated")
+    if is_gated:
+        return 4
+    if not cat or cat == "—":
+        return 2  # unknown — slight risk
+    return 1
+
+
+def compute_risk(
+    product: dict[str, Any],
+    exchange_rate: float | None = None,
+) -> Risk:
     """5-dimension risk (each 1–5, lower is better).
 
     ANALYST.md lines 32–39:
       - price:    fba_offer_count tiers (> 10 riskli)
       - demand:   monthly_sold tiers (< 20 riskli)
-      - fx:       TRY/USD — fixed 3 (we don't have volatility signal here)
-      - category: restricted/gated — fixed 2 (no tagging yet)
+      - fx:       TRY/USD rate-based (higher rate = higher risk)
+      - category: gated/restricted category detection
       - quality:  rating < 3.5 or review_count < 10
     """
     fba_offers = _num(product.get("fba_offer_count")) or 0
@@ -136,9 +184,9 @@ def compute_risk(product: dict[str, Any]) -> Risk:
     else:
         demand_risk = 1
 
-    fx_risk = 3  # placeholder until we track TRY volatility
+    fx_risk = _fx_risk_from_rate(exchange_rate)
 
-    category_risk = 2  # placeholder until category tagging lands
+    category_risk = _category_risk_from_product(product)
 
     rating = _num(product.get("rating"))
     reviews = _num(product.get("review_count")) or 0

@@ -142,7 +142,8 @@ async def node_load_context(state: AnalystState) -> dict[str, Any]:
         pf_settings = gs["data"] or {}
 
     profit = compute_profit(product or {}, pf_settings)
-    risk = compute_risk(product or {})
+    exchange_rate = pf_settings.get("exchange_rate")
+    risk = compute_risk(product or {}, exchange_rate=exchange_rate)
     scoring_verdict = decide(
         risk["total"],
         profit.get("roi_pct"),

@@ -1,11 +1,12 @@
-"""app_studio_marketing — daily campaign monitoring + country ROI analysis.
+"""app_studio_marketing — daily campaign monitoring + country ROI + VoC.
 
-Workflow: START → collect → analyze → report → END
+Workflow: START → collect → analyze → voc → report → END
 
 collect:  hub.api.campaigns (action=list) + hub.api.metrics (metric=countries,
           days=7) for each tracked app.
 analyze:  flag_underperforming_countries() pure function — ROI < min_roi.
           Flag campaigns with zero spend.
+voc:      Weekly Voice of Customer — web search for app reviews/sentiment.
 report:   Slack #growth-ops digest + Telegram + Memory + app.marketing.report event.
 """
 from __future__ import annotations
@@ -51,6 +52,7 @@ class MarketingState(TypedDict, total=False):
     countries_data: dict[str, list[dict[str, Any]]]  # app_id → country rows
     flagged_countries: list[dict[str, Any]]
     zero_spend_campaigns: list[dict[str, Any]]
+    voc_insights: list[dict[str, Any]]
     events: list[dict[str, Any]]
     memories: list[dict[str, Any]]
     kpi_updates: list[dict[str, Any]]
@@ -115,12 +117,59 @@ async def node_analyze(state: MarketingState) -> dict[str, Any]:
     }
 
 
+_VOC_APP_NAMES: dict[str, str] = {
+    "quit_smoking": "Quit Smoking Now",
+    "sms_forward": "SMS Forward",
+    "moodmate": "MoodMate",
+}
+
+
+async def node_voc(state: MarketingState) -> dict[str, Any]:
+    """Weekly Voice of Customer — search web for app reviews and sentiment.
+
+    Runs every 7th report (weekly cadence on top of daily schedule).
+    Searches for recent reviews, complaints, and feature requests.
+    """
+    state_accum = dict(state.get("state") or {})
+    reports_total = int(state_accum.get("reports_total", 0))
+
+    # Only run VoC weekly (every 7th marketing report)
+    if reports_total % 7 != 0:
+        return {"voc_insights": []}
+
+    goals = state.get("goals") or {}
+    tracked_apps: list[str] = goals.get("tracked_apps") or []
+    insights: list[dict[str, Any]] = []
+
+    for app_id in tracked_apps:
+        app_name = _VOC_APP_NAMES.get(app_id, app_id)
+        queries = [
+            f'"{app_name}" app review',
+            f'"{app_name}" app store rating complaint',
+        ]
+        for query in queries:
+            result = await invoke_from_state(
+                state, "web.search", {"query": query, "max_results": 5}
+            )
+            if result.get("status") == "ok":
+                for item in (result.get("data") or {}).get("results", [])[:3]:
+                    insights.append({
+                        "app_id": app_id,
+                        "title": item.get("title", ""),
+                        "snippet": item.get("snippet", "")[:200],
+                        "url": item.get("url", ""),
+                    })
+
+    return {"voc_insights": insights}
+
+
 async def node_report(state: MarketingState) -> dict[str, Any]:
     """Send Slack + Telegram digest, save memory, emit app.marketing.report."""
     flagged = state.get("flagged_countries") or []
     zero_spend = state.get("zero_spend_campaigns") or []
     campaigns = state.get("campaigns") or []
     countries_data = state.get("countries_data") or {}
+    voc_insights = state.get("voc_insights") or []
 
     # Build message
     lines: list[str] = ["*App Studio Marketing Daily Report*"]
@@ -133,6 +182,13 @@ async def node_report(state: MarketingState) -> dict[str, Any]:
         lines.append(
             f"  • {f.get('app_id', '?')} / {f.get('country', '?')} — ROI {f.get('roi', '?')}"
         )
+    if voc_insights:
+        lines.append(f"\n*VoC (Voice of Customer) — {len(voc_insights)} mentions:*")
+        for v in voc_insights[:5]:
+            lines.append(
+                f"  • [{v.get('app_id')}] {v.get('title', '')[:60]}\n"
+                f"    {v.get('snippet', '')[:100]}"
+            )
 
     text = "\n".join(lines)
 
@@ -208,10 +264,12 @@ def build_graph() -> Any:
     graph = StateGraph(MarketingState)
     graph.add_node("collect", node_collect)
     graph.add_node("analyze", node_analyze)
+    graph.add_node("voc", node_voc)
     graph.add_node("report", node_report)
     graph.add_edge(START, "collect")
     graph.add_edge("collect", "analyze")
-    graph.add_edge("analyze", "report")
+    graph.add_edge("analyze", "voc")
+    graph.add_edge("voc", "report")
     graph.add_edge("report", END)
     return graph.compile()
 

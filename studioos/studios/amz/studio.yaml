@@ -63,6 +63,11 @@ templates:
     display_name: "AMZ AdManager"
     description: "Surfaces high-traffic well-rated ASINs worth running PPC ads on; notify-only"
     workflow_ref: amz_admanager
+  - id: amz_analyst_daily
+    version: 1
+    display_name: "AMZ Analyst Daily"
+    description: "Daily top-10 opportunity report with profit/risk scoring in CEO 9-field format"
+    workflow_ref: amz_analyst_daily
   - id: amz_dev
     version: 1
     display_name: "AMZ Dev"
@@ -243,6 +248,23 @@ agents:
     tool_scope:
       - adsoptimizer.db.list_campaigns
       - pricefinder.db.ad_candidates
+      - telegram.notify
+      - slack.notify
+      - memory.search
+  - id: amz-analyst-daily
+    template_id: amz_analyst_daily
+    template_version: 1
+    display_name: "AMZ Analyst Daily"
+    mode: normal
+    heartbeat_config: {}
+    schedule_cron: "0 7 * * *"
+    goals:
+      top_n: 10
+      min_profit_dollars: 5.0
+      min_margin_pct: 20.0
+    tool_scope:
+      - pricefinder.db.top_opportunities
+      - pricefinder.db.global_settings
       - telegram.notify
       - slack.notify
       - memory.search

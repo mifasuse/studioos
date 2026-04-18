@@ -151,20 +151,54 @@ def node_diff(state: ScoutState) -> dict[str, Any]:
 
 
 def _format_digest(new_finds: list[dict[str, Any]]) -> str:
+    """Format scout digest in CEO 9-field format (CEO.md mandatory fields)."""
     if not new_finds:
         return ""
     lines = [f"*🔍 AMZ Scout — {len(new_finds)} yeni fırsat*\n"]
     for c in new_finds[:10]:
         asin = c.get("asin", "?")
         title = (c.get("title") or "")[:60]
-        roi = c.get("roi_percent")
-        profit = c.get("estimated_profit")
-        ms = c.get("monthly_sold")
+
+        # 1. ASIN + link
+        # 2. TR source + price
+        tr_price = c.get("tr_price")
+        tr_str = f"₺{tr_price:.0f}" if isinstance(tr_price, (int, float)) else "—"
+        tr_src = c.get("tr_source") or c.get("source_url") or "TR"
+
+        # 3. US BuyBox price
+        bb = c.get("buybox_price")
+        bb_str = f"${bb:.2f}" if isinstance(bb, (int, float)) else "—"
+
+        # 4. Sales rank + category
         rank = c.get("sales_rank")
-        roi_str = f"{roi:.0f}%" if isinstance(roi, (int, float)) else "—"
-        profit_str = f"${profit:.0f}" if isinstance(profit, (int, float)) else "—"
-        ms_str = f"{ms}/mo" if ms else "—"
+        cat = c.get("category") or c.get("product_group") or "—"
         rank_str = f"#{rank}" if rank else "—"
+
+        # 5. Monthly sold
+        ms = c.get("monthly_sold")
+        ms_str = f"{ms}/mo" if ms else "—"
+
+        # 6. Reviews + rating
+        rc = c.get("review_count")
+        rating = c.get("rating")
+        rev_str = f"{rc} rev · ⭐{rating}" if rc and rating else "—"
+
+        # 7. FBA seller count
+        fba = c.get("fba_offer_count")
+        fba_str = f"{fba}" if fba is not None else "—"
+
+        # 8. eBay price
+        ebay = c.get("ebay_price") or c.get("ebay_new_price")
+        ebay_str = f"${ebay:.2f}" if isinstance(ebay, (int, float)) else "—"
+
+        # 9. Net profit + ROI + margin
+        profit = c.get("estimated_profit")
+        roi = c.get("roi_percent")
+        margin = c.get("profit_margin_percent")
+        net_str = f"${profit:.2f}" if isinstance(profit, (int, float)) else "—"
+        roi_str = f"{roi:.0f}%" if isinstance(roi, (int, float)) else "—"
+        margin_str = f"{margin:.0f}%" if isinstance(margin, (int, float)) else "—"
+
         flags = []
         if c.get("heavy_weight_flag"):
             flags.append("🏋️>2.3kg")
@@ -174,9 +208,18 @@ def _format_digest(new_finds: list[dict[str, Any]]) -> str:
         except Exception:
             pass
         flag_str = f" [{', '.join(flags)}]" if flags else ""
+
         lines.append(
-            f"• `{asin}` ROI {roi_str} · {profit_str} · {ms_str} · rank {rank_str}{flag_str}\n"
-            f"  {title}"
+            f"• `{asin}` {title}{flag_str}\n"
+            f"  1.ASIN: amazon.com/dp/{asin}\n"
+            f"  2.TR: {tr_src} {tr_str}\n"
+            f"  3.BuyBox: {bb_str}\n"
+            f"  4.Rank: {rank_str} / {cat}\n"
+            f"  5.Satış: {ms_str}\n"
+            f"  6.Review: {rev_str}\n"
+            f"  7.FBA: {fba_str}\n"
+            f"  8.eBay: {ebay_str}\n"
+            f"  9.Net: {net_str} · ROI: {roi_str} · Margin: {margin_str}"
         )
     if len(new_finds) > 10:
         lines.append(f"\n_+{len(new_finds) - 10} more_")

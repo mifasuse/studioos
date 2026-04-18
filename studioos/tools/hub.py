@@ -231,3 +231,77 @@ async def hub_api_campaigns(args: dict[str, Any], ctx: ToolContext) -> ToolResul
         return ToolResult(data=data if isinstance(data, dict) else {"result": data})
 
     raise ToolError(f"Unknown action '{action}'")
+
+
+# ---------------------------------------------------------------------------
+# hub.api.conversion — convenience alias for hub.api.metrics(metric=conversion)
+# ---------------------------------------------------------------------------
+
+@register_tool(
+    "hub.api.conversion",
+    description=(
+        "Fetch conversion funnel metrics for an app from Hub. "
+        "Shortcut for hub.api.metrics with metric=conversion."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "app_id": {
+                "type": "string",
+                "description": "The app identifier in Hub.",
+            },
+            "days": {
+                "type": "integer",
+                "description": "Look-back window in days (default 30).",
+                "default": 30,
+            },
+        },
+        "required": ["app_id"],
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="app",
+    cost_cents=0,
+)
+async def hub_api_conversion(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    app_id: str = args["app_id"]
+    days: int = int(args.get("days", 30))
+    data = await _get("/metrics/conversion", {"app_id": app_id, "days": days})
+    return ToolResult(data=data)
+
+
+# ---------------------------------------------------------------------------
+# hub.api.countries — convenience alias for hub.api.metrics(metric=countries)
+# ---------------------------------------------------------------------------
+
+@register_tool(
+    "hub.api.countries",
+    description=(
+        "Fetch country-level metrics for an app from Hub. "
+        "Shortcut for hub.api.metrics with metric=countries."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "app_id": {
+                "type": "string",
+                "description": "The app identifier in Hub.",
+            },
+            "days": {
+                "type": "integer",
+                "description": "Look-back window in days (default 30).",
+                "default": 30,
+            },
+        },
+        "required": ["app_id"],
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="app",
+    cost_cents=0,
+)
+async def hub_api_countries(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    app_id: str = args["app_id"]
+    days: int = int(args.get("days", 30))
+    data = await _get("/metrics/countries", {"app_id": app_id, "days": days})
+    return ToolResult(data=data)
