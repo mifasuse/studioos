@@ -511,6 +511,7 @@ async def node_format_response(state: ReactState) -> dict[str, Any]:
     if trigger_type == "slack_mention" and channel and thread_ts:
         from studioos.slack_routing import (
             _AGENT_SHORT_NAMES,
+            _KNOWN_AGENTS,
             check_cascade,
         )
         # Look for @short_name patterns in response
@@ -518,7 +519,15 @@ async def node_format_response(state: ReactState) -> dict[str, Any]:
         source_prefix = "amz-" if agent_id.startswith("amz-") else "app-studio-" if agent_id.startswith("app-studio-") else ""
         for match in re.finditer(r"@(\w[\w-]*)", final_response):
             target_short = match.group(1).lower()
-            target_agent = _AGENT_SHORT_NAMES.get(target_short)
+            # Prefer same-studio match: "amz-ceo" + "@qa" → "amz-qa"
+            # Short-name map has last-write-wins collision so try prefixed first.
+            target_agent: str | None = None
+            if source_prefix:
+                candidate = f"{source_prefix}{target_short}"
+                if candidate in _KNOWN_AGENTS:
+                    target_agent = candidate
+            if target_agent is None:
+                target_agent = _AGENT_SHORT_NAMES.get(target_short)
             # Cross-studio protection: only chain to agents in same studio
             if target_agent and target_agent != agent_id and (
                 not source_prefix or target_agent.startswith(source_prefix)
