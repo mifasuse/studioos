@@ -160,7 +160,7 @@ async def node_report(state: HubDevState) -> dict[str, Any]:
     notify_slack = await invoke_from_state(
         state,
         "slack.notify",
-        {"text": text, "channel": "#hub", "mrkdwn": True},
+        {"text": text, "mrkdwn": True},
     )
 
     state_accum = dict(state.get("state") or {})

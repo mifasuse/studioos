@@ -195,7 +195,7 @@ async def node_report(state: MarketingState) -> dict[str, Any]:
     slack_result = await invoke_from_state(
         state,
         "slack.notify",
-        {"text": text, "channel": "#growth-ops", "mrkdwn": True},
+        {"text": text, "mrkdwn": True},
     )
     tg_result = await invoke_from_state(
         state,
