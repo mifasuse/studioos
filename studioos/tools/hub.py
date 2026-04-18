@@ -110,6 +110,50 @@ async def hub_api_overview(args: dict[str, Any], ctx: ToolContext) -> ToolResult
     return ToolResult(data=data)
 
 
+@register_tool(
+    "hub.api.overview_all",
+    description=(
+        "Fetch overview metrics for MULTIPLE apps in one call. Use this "
+        "when you need data for all tracked apps — avoids multi-iteration "
+        "tool calls. Returns dict of app_id → overview data."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "app_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of app IDs to fetch overview for.",
+            },
+            "days": {
+                "type": "integer",
+                "description": "Look-back window in days (default 7).",
+                "default": 7,
+            },
+        },
+        "required": ["app_ids"],
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="app",
+    cost_cents=0,
+)
+async def hub_api_overview_all(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    import asyncio as _asyncio
+    app_ids: list[str] = args["app_ids"]
+    days: int = int(args.get("days", 7))
+
+    async def fetch_one(aid: str) -> tuple[str, dict[str, Any] | None]:
+        try:
+            data = await _get("/overview", {"app_id": aid, "days": days})
+            return aid, data
+        except ToolError as exc:
+            return aid, {"error": str(exc)[:200]}
+
+    results = await _asyncio.gather(*(fetch_one(a) for a in app_ids))
+    return ToolResult(data={"apps": dict(results), "days": days})
+
+
 # ---------------------------------------------------------------------------
 # hub.api.metrics
 # ---------------------------------------------------------------------------
