@@ -120,6 +120,51 @@ async def _handle_approval_command(text: str, channel: str, ts: str) -> None:
         log.warning("slack_events.approval_error", error=str(exc)[:100])
 
 
+async def _resolve_thread_agent(channel: str, thread_ts: str) -> str | None:
+    """Find which agent last responded in a thread.
+
+    When a user replies in a thread without mentioning an agent,
+    route the reply to whoever the bot was acting as in that thread.
+    """
+    token = settings.slack_bot_token
+    if not token:
+        return None
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                "https://slack.com/api/conversations.replies",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"channel": channel, "ts": thread_ts, "limit": 20},
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            if not data.get("ok"):
+                return None
+            # Walk messages in reverse to find the last bot message
+            # Bot messages have username set to agent display name
+            from studioos.slack_routing import _AGENT_SHORT_NAMES
+            all_agents = set(_AGENT_SHORT_NAMES.values())
+            for msg in reversed(data.get("messages") or []):
+                if not msg.get("bot_id"):
+                    continue
+                # username field contains the agent display name
+                username = (msg.get("username") or "").lower().replace(" ", "-")
+                # Try matching: "App Studio Ceo" → "app-studio-ceo"
+                if username in all_agents:
+                    return username
+                # Try matching display name patterns
+                for aid in all_agents:
+                    # "amz-ceo" matches "Amz Ceo" username
+                    normalized = aid.replace("-", " ").replace("_", " ")
+                    if username == normalized.replace(" ", "-"):
+                        return aid
+    except Exception as exc:
+        log.warning("slack_events.thread_resolve_error", error=str(exc)[:100])
+    return None
+
+
 async def _process_mention(event: dict[str, Any]) -> None:
     """Route a Slack message to the correct agent run.
 
@@ -143,13 +188,20 @@ async def _process_mention(event: dict[str, Any]) -> None:
         await _handle_approval_command(clean, channel, event.get("ts", ""))
         return
 
+    thread_ts = event.get("thread_ts") or ""
+
     agent_id = resolve_agent_from_mention(text, channel=channel)
+
+    # If no agent found and this is a thread reply, route to the agent
+    # that owns the thread (the one that last responded in this thread).
+    if not agent_id and thread_ts:
+        agent_id = await _resolve_thread_agent(channel, thread_ts)
+
     if not agent_id:
         log.debug("slack_events.no_agent", text=text[:100])
         return
 
-    channel = event.get("channel", "")
-    thread_ts = event.get("thread_ts") or event.get("ts", "")
+    thread_ts = thread_ts or event.get("ts", "")
     message_ts = event.get("ts", "")
     user = event.get("user", "")
     studio_id = _studio_for_agent(agent_id)
