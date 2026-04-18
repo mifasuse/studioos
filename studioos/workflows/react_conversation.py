@@ -520,7 +520,7 @@ async def node_format_response(state: ReactState) -> dict[str, Any]:
                             "react_conversation.chained",
                             source=agent_id,
                             target=target_agent,
-                            task=task_text[:60],
+                            task=task_line[:60],
                         )
                     except Exception as exc:
                         log.warning("react_conversation.chain_error", error=str(exc)[:100])
