@@ -30,7 +30,7 @@ log = get_logger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-MAX_ITERATIONS = 8
+MAX_ITERATIONS = 15
 
 # Infrastructure tools the ReAct workflow needs regardless of agent's
 # tool_scope. These bypass the per-agent allow-list enforcement.

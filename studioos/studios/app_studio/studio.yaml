@@ -147,9 +147,6 @@ agents:
     tool_scope:
       - hub.api.overview
       - hub.api.metrics
-      - exec.read_file
-      - exec.list_dir
-      - exec.git_log
       - exec.codemagic_status
       - slack.notify
       - telegram.notify
