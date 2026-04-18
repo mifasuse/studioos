@@ -149,6 +149,7 @@ agents:
       - hub.api.overview_all
       - hub.api.metrics
       - exec.codemagic_status
+      - exec.codemagic_recent_builds
       - slack.notify
       - telegram.notify
       - memory.search

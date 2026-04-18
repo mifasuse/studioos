@@ -613,3 +613,75 @@ async def exec_codemagic_status(args: dict[str, Any], ctx: ToolContext) -> ToolR
             else None,
         }
     )
+
+
+@register_tool(
+    "exec.codemagic_recent_builds",
+    description=(
+        "List recent Codemagic builds for one or more apps. "
+        "Returns status, commit, workflow, times for the last N builds. "
+        "Use to see pipeline state without needing specific build IDs."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "app_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Codemagic application IDs",
+            },
+            "limit": {
+                "type": "integer",
+                "default": 5,
+                "description": "Max builds per app (default 5)",
+            },
+        },
+        "required": ["app_ids"],
+        "additionalProperties": False,
+    },
+    requires_network=True,
+    category="exec",
+    cost_cents=0,
+)
+async def exec_codemagic_recent_builds(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    import urllib.request
+
+    app_ids: list[str] = args["app_ids"]
+    limit: int = int(args.get("limit", 5))
+    token = settings.codemagic_token
+    if not token:
+        raise ToolError("STUDIOOS_CODEMAGIC_TOKEN is not configured")
+
+    loop = asyncio.get_event_loop()
+    result: dict[str, Any] = {}
+
+    for app_id in app_ids:
+        try:
+            req = urllib.request.Request(
+                f"https://api.codemagic.io/builds?appId={app_id}&limit={limit}",
+                headers={"x-auth-token": token},
+            )
+            body = await loop.run_in_executor(
+                None,
+                lambda r=req: urllib.request.urlopen(r, timeout=15).read(),
+            )
+            data = _json.loads(body)
+            builds = data.get("builds", []) if isinstance(data, dict) else []
+            result[app_id] = [
+                {
+                    "build_id": b.get("_id"),
+                    "status": b.get("status"),
+                    "workflow_id": b.get("workflowId"),
+                    "branch": b.get("branch"),
+                    "started_at": b.get("startedAt"),
+                    "finished_at": b.get("finishedAt"),
+                    "commit": (b.get("commit") or {}).get("hash", "")[:8]
+                    if isinstance(b.get("commit"), dict)
+                    else None,
+                }
+                for b in builds[:limit]
+            ]
+        except Exception as exc:
+            result[app_id] = {"error": str(exc)[:200]}
+
+    return ToolResult(data={"apps": result, "limit": limit})
