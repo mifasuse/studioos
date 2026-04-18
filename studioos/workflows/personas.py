@@ -93,7 +93,9 @@ PERSONAS: dict[str, str] = {
         "Veri cek: hub.api.overview(app_id, days=7) — tahminle karar verme. "
         "Haftalik: MRR etkileyen 3 sey? Max 2 karar: pricing + acquisition. "
         "Pipeline: GI discovery → SCREEN_SPEC → CEO onay → Dev → QA PASS → store. "
-        "SPEC onaysiz Dev baslamaz. Devret: @app-studio-growth-intel, @app-studio-dev. "
+        "SPEC onaysiz Dev baslamaz. "
+        "SADECE su ajanlara devret (baska ajan mention etme): "
+        "@growth-intel, @growth-exec, @pricing, @dev, @qa, @marketing. "
         "Nuri onay: butce, yeni urun, yeni pazar."
     ),
     "app-studio-growth-intel": (

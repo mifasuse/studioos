@@ -477,10 +477,15 @@ async def node_format_response(state: ReactState) -> dict[str, Any]:
             check_cascade,
         )
         # Look for @short_name patterns in response
+        # Determine source studio prefix for cross-studio protection
+        source_prefix = "amz-" if agent_id.startswith("amz-") else "app-studio-" if agent_id.startswith("app-studio-") else ""
         for match in re.finditer(r"@(\w[\w-]*)", final_response):
             target_short = match.group(1).lower()
             target_agent = _AGENT_SHORT_NAMES.get(target_short)
-            if target_agent and target_agent != agent_id:
+            # Cross-studio protection: only chain to agents in same studio
+            if target_agent and target_agent != agent_id and (
+                not source_prefix or target_agent.startswith(source_prefix)
+            ):
                 if check_cascade(thread_ts, target_agent, responding_agent_id=agent_id):
                     # Pass the FULL response as context + the specific task after mention
                     after = final_response[match.end():].strip()
