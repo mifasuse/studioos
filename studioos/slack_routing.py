@@ -21,6 +21,15 @@ log = get_logger(__name__)
 _BOT_USER_MAP: dict[str, str] = {}  # slack_user_id → agent_id
 _AGENT_BOT_MAP: dict[str, str] = {}  # agent_id → slack_user_id
 
+# Channel ID → studio_id mapping, populated at startup
+_CHANNEL_STUDIO_MAP: dict[str, str] = {}  # channel_id → studio_id
+
+# Channel name patterns → studio_id (fallback when config is empty)
+_CHANNEL_NAME_PATTERNS: dict[str, str] = {
+    "amz": "amz",       # amz-hq, amz-ops, etc.
+    "app": "app-studio", # app-hq, app-ops, etc.
+}
+
 
 async def init_bot_user_map() -> None:
     """Call auth.test for each agent bot token to learn its user_id."""
@@ -121,7 +130,48 @@ async def init_bot_user_map() -> None:
                             _AGENT_BOT_MAP[agent_id] = uid
                 except Exception:
                     pass
-    log.info("slack_routing.ready", bot_count=len(_BOT_USER_MAP), single_app=bool(_SINGLE_APP_BOT_UID))
+    # Auto-discover channel → studio mapping from Slack API
+    # Uses config first, then falls back to channel name pattern matching
+    studio_channels_cfg = _parse_map(
+        getattr(settings, "slack_studio_channels", "")
+    )
+    if studio_channels_cfg:
+        for studio_id, ch_id in studio_channels_cfg.items():
+            _CHANNEL_STUDIO_MAP[ch_id] = studio_id
+    elif bot_token:
+        # Auto-discover: fetch channel list and match by name pattern
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://slack.com/api/conversations.list",
+                    params={"types": "public_channel,private_channel", "limit": 100},
+                    headers={"Authorization": f"Bearer {bot_token}"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("ok"):
+                        for ch in data.get("channels") or []:
+                            ch_name = ch.get("name", "").lower()
+                            ch_id = ch.get("id", "")
+                            for pattern, studio_id in _CHANNEL_NAME_PATTERNS.items():
+                                if ch_name.startswith(pattern):
+                                    _CHANNEL_STUDIO_MAP[ch_id] = studio_id
+                                    log.info(
+                                        "slack_routing.channel_mapped",
+                                        channel=ch_name,
+                                        channel_id=ch_id,
+                                        studio_id=studio_id,
+                                    )
+                                    break
+        except Exception as exc:
+            log.warning("slack_routing.channel_discovery_error", error=str(exc))
+
+    log.info(
+        "slack_routing.ready",
+        bot_count=len(_BOT_USER_MAP),
+        single_app=bool(_SINGLE_APP_BOT_UID),
+        channel_mappings=len(_CHANNEL_STUDIO_MAP),
+    )
 
 
 def resolve_agent_from_mention(text: str, channel: str = "") -> str | None:
@@ -147,24 +197,19 @@ def resolve_agent_from_mention(text: str, channel: str = "") -> str | None:
         if not parts:
             return None
         candidate = parts[0].lower().rstrip(",:;.!?")
-
-        # Resolve via channel → studio prefix (priority: channel-aware)
-        studio_channels = _parse_map(
-            getattr(settings, "slack_studio_channels", "")
-        )
         all_agents = set(_AGENT_SHORT_NAMES.values())
 
-        # First: try channel-based prefix
-        for studio_id, ch_id in studio_channels.items():
-            if ch_id == channel:
-                if studio_id == "amz":
-                    full_id = f"amz-{candidate}"
-                elif studio_id == "app-studio":
-                    full_id = f"app-studio-{candidate}"
-                else:
-                    continue
-                if full_id in all_agents:
-                    return full_id
+        # First: try channel-based prefix (auto-discovered or configured)
+        studio_id = _CHANNEL_STUDIO_MAP.get(channel)
+        if studio_id:
+            if studio_id == "amz":
+                full_id = f"amz-{candidate}"
+            elif studio_id == "app-studio":
+                full_id = f"app-studio-{candidate}"
+            else:
+                full_id = f"{studio_id}-{candidate}"
+            if full_id in all_agents:
+                return full_id
 
         # Fallback: direct short name match (no channel context)
         if candidate in _AGENT_SHORT_NAMES:
