@@ -78,6 +78,12 @@ def node_score(state: DailyState) -> dict[str, Any]:
 
     exchange_rate = pf_settings.get("exchange_rate")
     for item in items:
+        # Normalize field names: top_opportunities returns source_price/target_price
+        # but scoring expects tr_price/buybox_price
+        if "source_price" in item and "tr_price" not in item:
+            item["tr_price"] = item["source_price"]
+        if "target_price" in item and "buybox_price" not in item:
+            item["buybox_price"] = item["target_price"]
         profit = compute_profit(item, pf_settings)
         risk = compute_risk(item, exchange_rate=exchange_rate)
         verdict = decide(
@@ -101,17 +107,24 @@ def node_score(state: DailyState) -> dict[str, Any]:
 
 
 def _format_9field(item: dict[str, Any]) -> str:
-    """Format a single item in CEO 9-field format (ANALYST.md / CEO.md)."""
+    """Format a single item in CEO 9-field format (ANALYST.md / CEO.md).
+
+    Handles field names from both top_opportunities (source_price, target_price)
+    and lookup_asins (tr_price, buybox_price).
+    """
     asin = item.get("asin", "?")
     profit = item.get("_profit") or {}
     risk = item.get("_risk") or {}
     verdict = item.get("_verdict", "?")
+    title = (item.get("title") or "")[:50]
 
-    tr_price = item.get("tr_price")
+    # TR price: source_price (top_opps) or tr_price (lookup)
+    tr_price = item.get("source_price") or item.get("tr_price")
     tr_src = item.get("tr_source") or item.get("source_url") or "TR"
     tr_str = f"₺{tr_price:.0f}" if isinstance(tr_price, (int, float)) else "—"
 
-    buybox = profit.get("buybox_price")
+    # US BuyBox: target_price (top_opps) or buybox_price (lookup)
+    buybox = item.get("target_price") or item.get("buybox_price") or profit.get("buybox_price")
     bb_str = f"${buybox:.2f}" if isinstance(buybox, (int, float)) else "—"
 
     rank = item.get("sales_rank")
@@ -125,21 +138,23 @@ def _format_9field(item: dict[str, Any]) -> str:
     rating = item.get("rating")
     rev_str = f"{rc} rev · ⭐{rating}" if rc and rating else "—"
 
-    fba = item.get("fba_offer_count")
+    # FBA offers: fba_offer_count (lookup) or competition_level (top_opps)
+    fba = item.get("fba_offer_count") or item.get("competition_level")
     fba_str = f"{fba}" if fba is not None else "—"
 
     ebay = item.get("ebay_price") or item.get("ebay_new_price")
     ebay_str = f"${ebay:.2f}" if isinstance(ebay, (int, float)) else "—"
 
-    net = profit.get("net_profit_usd")
-    roi = profit.get("roi_pct")
-    margin = profit.get("margin_pct")
+    # Profit from scoring or from raw data
+    net = profit.get("net_profit_usd") or item.get("estimated_profit")
+    roi = profit.get("roi_pct") or item.get("roi_percent")
+    margin = profit.get("margin_pct") or item.get("profit_margin_percent")
     net_str = f"${net:.2f}" if isinstance(net, (int, float)) else "—"
     roi_str = f"{roi:.0f}%" if isinstance(roi, (int, float)) else "—"
     margin_str = f"{margin:.0f}%" if isinstance(margin, (int, float)) else "—"
 
     return (
-        f"• `{asin}` [{verdict}]\n"
+        f"• `{asin}` [{verdict}] {title}\n"
         f"  1. ASIN: amazon.com/dp/{asin}\n"
         f"  2. TR: {tr_src} {tr_str}\n"
         f"  3. US BuyBox: {bb_str}\n"
