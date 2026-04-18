@@ -45,10 +45,16 @@ def check_app_health(
     max_fail = thresholds.get("failure_rate_threshold", 20.0)
     if failure_rate_pct > max_fail:
         failed.append({"check": "high_failure_rate", "value": failure_rate_pct, "threshold": max_fail})
-    # MRR zero (app might be down)
+    # MRR sudden drop: only flag if app previously had MRR > 0 and now
+    # dropped to zero (indicates a payment/subscription issue). MRR=0
+    # on its own is normal for free/pre-launch apps — not a QA failure.
     mrr = overview.get("mrr")
-    if mrr is not None and mrr == 0:
-        failed.append({"check": "zero_mrr", "value": 0, "threshold": "any"})
+    prev_mrr = overview.get("prev_mrr") or overview.get("mrr_previous")
+    if mrr is not None and mrr == 0 and prev_mrr and float(prev_mrr) > 0:
+        failed.append({"check": "mrr_dropped_to_zero", "value": 0, "threshold": prev_mrr})
+    # Hub API unreachable (overview came back empty = API down)
+    if not overview:
+        failed.append({"check": "hub_api_unreachable", "value": None, "threshold": "reachable"})
     return failed
 
 
@@ -205,19 +211,18 @@ async def node_verdict(state: QAState) -> dict[str, Any]:
 
     text = "\n".join(lines)
 
-    # Notify Slack #build
-    await invoke_from_state(
-        state,
-        "slack.notify",
-        {"text": text, "mrkdwn": True, "unfurl_links": False},
-    )
-
-    # Notify Telegram
-    await invoke_from_state(
-        state,
-        "telegram.notify",
-        {"text": text, "parse_mode": "Markdown", "disable_web_page_preview": True},
-    )
+    # Only notify on FAIL — PASS is silent (no spam every 6h)
+    if overall == "FAIL":
+        await invoke_from_state(
+            state,
+            "slack.notify",
+            {"text": text, "mrkdwn": True, "unfurl_links": False},
+        )
+        await invoke_from_state(
+            state,
+            "telegram.notify",
+            {"text": text, "parse_mode": "Markdown", "disable_web_page_preview": True},
+        )
 
     # Emit event
     events: list[dict[str, Any]] = []
