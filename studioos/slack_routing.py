@@ -59,6 +59,8 @@ async def init_bot_user_map() -> None:
         "app-studio-growth-intel", "app-studio-growth-exec",
         "app-studio-ceo", "app-studio-pricing", "app-studio-dev",
         "app-studio-qa", "app-studio-marketing", "app-studio-hub-dev",
+        "app-studio-game-designer",
+        "amz-analyst-daily",
     ]
     for aid in _known_agents:
         # Short names: "pricer", "scout", "ceo", "growth-intel", etc.
