@@ -172,13 +172,14 @@ async def node_scan_rules(state: CrossState) -> dict[str, Any]:
 
 
 def node_diff(state: CrossState) -> dict[str, Any]:
-    candidates = state.get("candidates") or []
+    # User directive: only surface stranded inventory (dead FBA stock).
+    # listable_items (regular FBA inventory) and eBay arbitrage candidates
+    # are NOT reported — those decisions are handled elsewhere (Veeqo sync)
+    # or need real eBay price data we don't yet have.
     stranded = state.get("stranded") or []
     existing = dict(state.get("state") or {})
     seen = set(existing.get("crosslisted_asins") or [])
 
-    # Stranded items are the priority bucket — surface them first and
-    # always tag priority=stranded even if we've seen the ASIN before.
     stranded_tagged = []
     for s in stranded:
         asin = s.get("asin")
@@ -194,24 +195,12 @@ def node_diff(state: CrossState) -> dict[str, Any]:
             }
         )
 
-    new_normal = []
-    for c in candidates:
-        asin = c.get("asin")
-        if not asin or asin in seen:
-            continue
-        pricing = _ebay_target_price(
-            c.get("ebay_new_usd"), c.get("amazon_buybox_usd") or c.get("amazon_price"), None
-        )
-        new_normal.append({**c, **pricing, "priority": "normal"})
-        seen.add(asin)
-
-    # Stranded items also deduped against seen — only new stranded reported
+    # Only new stranded items (dedup against previously reported)
     new_finds: list[dict[str, Any]] = []
     for s in stranded_tagged:
         if s["asin"] not in seen:
             seen.add(s["asin"])
             new_finds.append(s)
-    new_finds.extend(new_normal)
 
     if len(seen) > 500:
         seen = set(list(seen)[-500:])
@@ -285,11 +274,11 @@ async def node_auto_list(state: CrossState) -> dict[str, Any]:
 
 
 def _format_digest(items: list[dict[str, Any]]) -> str:
-    lines = [f"*🛒 AMZ CrossLister — {len(items)} eBay fırsatı*"]
+    lines = [f"*🛒 AMZ CrossLister — {len(items)} stranded ürün eBay'e listelendi*"]
     for c in items[:10]:
         asin = c.get("asin", "?")
-        bb = c.get("amazon_buybox_usd")
-        eb = c.get("ebay_new_usd")
+        bb = c.get("amazon_buybox_usd") or c.get("amazon_price")
+        eb = c.get("ebay_new_usd") or c.get("ebay_target_price")
         prem = c.get("premium_pct")
         ms = c.get("monthly_sold")
         title = (c.get("title") or "")[:50]
@@ -409,13 +398,11 @@ async def node_emit(state: CrossState) -> dict[str, Any]:
 
 def build_graph() -> Any:
     graph = StateGraph(CrossState)
-    graph.add_node("scan", node_scan)
     graph.add_node("scan_rules", node_scan_rules)
     graph.add_node("diff", node_diff)
     graph.add_node("auto_list", node_auto_list)
     graph.add_node("emit", node_emit)
-    graph.add_edge(START, "scan")
-    graph.add_edge("scan", "scan_rules")
+    graph.add_edge(START, "scan_rules")
     graph.add_edge("scan_rules", "diff")
     graph.add_edge("diff", "auto_list")
     graph.add_edge("auto_list", "emit")
