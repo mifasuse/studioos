@@ -83,14 +83,45 @@ _JSON_FENCE_RE = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
 
 
 def _repair_json(raw: str) -> str:
-    """Append missing closing braces/brackets to make truncated JSON parseable."""
+    """Append missing closing braces/brackets + fix unquoted keys."""
     opens = raw.count("{") - raw.count("}")
     open_brackets = raw.count("[") - raw.count("]")
     fixed = raw.rstrip()
+    # Strip trailing extra closing braces (LLM sometimes adds stray })
+    while opens < 0 and fixed.endswith("}"):
+        fixed = fixed[:-1].rstrip()
+        opens += 1
     # Close arrays first, then objects (inner-to-outer)
     fixed += "]" * max(0, open_brackets)
     fixed += "}" * max(0, opens)
+    # Quote unquoted keys: {tool: "x"} → {"tool": "x"}
+    fixed = re.sub(
+        r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)',
+        r'\1"\2"\3',
+        fixed,
+    )
     return fixed
+
+
+def _try_parse_all_toolcalls(text: str) -> dict[str, Any] | None:
+    """Find the first valid tool call in any [TOOL_CALL] block."""
+    # Match all [TOOL_CALL]...[/TOOL_CALL] blocks
+    for match in re.finditer(
+        r'\[TOOL_CALL\](.*?)(?:\[/TOOL_CALL\]|$)', text, re.DOTALL
+    ):
+        raw = match.group(1).strip()
+        for attempt in (raw, _repair_json(raw)):
+            try:
+                obj = json.loads(attempt)
+                if isinstance(obj, dict) and "tool" in obj:
+                    return {
+                        "type": "tool_call",
+                        "tool": obj["tool"],
+                        "args": obj.get("args", {}),
+                    }
+            except (json.JSONDecodeError, ValueError):
+                continue
+    return None
 
 
 def parse_llm_response(text: str) -> dict[str, Any]:
@@ -128,26 +159,11 @@ def parse_llm_response(text: str) -> dict[str, Any]:
         if open_braces > 0:
             candidate = candidate + "}" * open_braces
 
-    # Handle [TOOL_CALL]...[/TOOL_CALL] format (MiniMax style)
-    # LLM may produce truncated JSON — repair missing braces/brackets
-    # Match with or without closing tag (truncation tolerance)
-    toolcall_match = re.search(
-        r'\[TOOL_CALL\](.*?)(?:\[/TOOL_CALL\]|$)', candidate, re.DOTALL
-    )
-    if toolcall_match:
-        raw = toolcall_match.group(1).strip()
-        # Try as-is first
-        for attempt in (raw, _repair_json(raw)):
-            try:
-                obj = json.loads(attempt)
-                if isinstance(obj, dict) and "tool" in obj:
-                    return {
-                        "type": "tool_call",
-                        "tool": obj["tool"],
-                        "args": obj.get("args", {}),
-                    }
-            except (json.JSONDecodeError, ValueError):
-                continue
+    # Handle [TOOL_CALL]...[/TOOL_CALL] format (MiniMax style).
+    # Try each block; return first valid tool call.
+    toolcall_result = _try_parse_all_toolcalls(candidate)
+    if toolcall_result:
+        return toolcall_result
 
     # Try finding JSON object embedded in text (LLM sometimes adds
     # prose before the JSON: "Kontrol ediyorum...\n{"tool": ...}")
