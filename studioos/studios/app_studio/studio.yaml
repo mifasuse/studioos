@@ -121,6 +121,8 @@ agents:
       - slack.notify
       - telegram.notify
       - memory.search
+      - nitter.search
+      - web.search
   - id: app-studio-growth-exec
     template_id: app_studio_growth_exec
     template_version: 1
@@ -216,6 +218,7 @@ agents:
       - slack.notify
       - telegram.notify
       - memory.search
+      - web.search
   - id: app-studio-hub-dev
     template_id: app_studio_hub_dev
     template_version: 1

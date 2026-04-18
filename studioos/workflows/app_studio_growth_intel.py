@@ -145,6 +145,8 @@ class GrowthIntelState(TypedDict, total=False):
     memories: list[dict[str, Any]]
     kpi_updates: list[dict[str, Any]]
     summary: str
+    opportunity_signals: list[str]
+    opportunity_summary: str
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +381,118 @@ async def node_report(state: GrowthIntelState) -> dict[str, Any]:
     }
 
 
+OPPORTUNITY_SYSTEM_PROMPT = (
+    "Sen bir mobil uygulama fırsat analistisin. "
+    "Sana sosyal medya sinyalleri ve web araştırması verilir. "
+    "Türkçe, net ve öz biçimde en iyi 3 fırsatı özetle. "
+    "Her fırsat için: hangi sorunu çözüyor, hedef kitle kim, potansiyel gelir modeli nedir. "
+    "Maksimum 300 kelime kullan."
+)
+
+
+async def node_scan_opportunities(state: GrowthIntelState) -> dict[str, Any]:
+    """Search Nitter + web for market opportunity signals and summarise."""
+    signals: list[str] = []
+
+    # Nitter searches
+    nitter_queries = [
+        "I wish there was an app",
+        "app idea",
+        "someone should make an app",
+    ]
+    for q in nitter_queries:
+        result = await invoke_from_state(state, "nitter.search", {"query": q, "limit": 10})
+        if result.get("status") == "ok":
+            tweets = (result.get("data") or {}).get("tweets") or []
+            signals.extend(tweets)
+
+    # Web searches
+    web_queries = [
+        "indie app opportunities 2026",
+        "underserved app niches",
+    ]
+    for q in web_queries:
+        result = await invoke_from_state(state, "web.search", {"query": q, "limit": 5})
+        if result.get("status") == "ok":
+            items = (result.get("data") or {}).get("results") or []
+            for item in items:
+                snippet = item.get("snippet", "")
+                title = item.get("title", "")
+                if snippet:
+                    signals.append(f"{title}: {snippet}")
+
+    opportunity_summary = ""
+    if signals:
+        import json
+
+        signals_text = json.dumps(signals[:30], ensure_ascii=False)[:3000]
+        user_message = (
+            f"Aşağıdaki sinyallerden en iyi 3 mobil uygulama fırsatını özetle:\n\n"
+            f"{signals_text}"
+        )
+        llm_result = await invoke_from_state(
+            state,
+            "llm.chat",
+            {
+                "messages": [
+                    {"role": "system", "content": OPPORTUNITY_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                "max_tokens": 600,
+                "temperature": 0.4,
+            },
+        )
+        if llm_result.get("status") == "ok":
+            opportunity_summary = (llm_result.get("data") or {}).get("content", "")
+        else:
+            log.warning(
+                "app_studio_growth_intel.opportunity_llm_failed",
+                error=llm_result.get("error"),
+            )
+            opportunity_summary = (
+                f"[LLM hatası — {llm_result.get('error', 'bilinmeyen hata')}]"
+            )
+
+        # Post to Slack
+        slack_text = (
+            f"*App Studio Fırsat Taraması*\n\n"
+            f"_{len(signals)} sinyal toplandı_\n\n"
+            f"{opportunity_summary[:2000]}"
+        )
+        slack_result = await invoke_from_state(
+            state, "slack.notify", {"text": slack_text}
+        )
+        if slack_result.get("status") != "ok":
+            log.warning(
+                "app_studio_growth_intel.opportunity_slack_failed",
+                error=slack_result.get("error"),
+            )
+
+        # Save to memory
+        existing_memories = list(state.get("memories") or [])
+        existing_memories.append(
+            {
+                "content": (
+                    f"Fırsat taraması: {len(signals)} sinyal. "
+                    f"{opportunity_summary[:200]}"
+                ),
+                "tags": ["app-studio", "opportunities", "market-research"],
+                "importance": 0.7,
+            }
+        )
+        return {
+            "opportunity_signals": signals,
+            "opportunity_summary": opportunity_summary,
+            "memories": existing_memories,
+        }
+
+    log.info("app_studio_growth_intel.no_opportunity_signals")
+    return {
+        "opportunity_signals": signals,
+        "opportunity_summary": "",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Graph
 # ---------------------------------------------------------------------------
@@ -388,11 +502,13 @@ def build_graph() -> Any:
     graph.add_node("collect", node_collect)
     graph.add_node("analyze", node_analyze)
     graph.add_node("report", node_report)
+    graph.add_node("scan_opportunities", node_scan_opportunities)
 
     graph.add_edge(START, "collect")
     graph.add_edge("collect", "analyze")
     graph.add_edge("analyze", "report")
-    graph.add_edge("report", END)
+    graph.add_edge("report", "scan_opportunities")
+    graph.add_edge("scan_opportunities", END)
     return graph.compile()
 
 

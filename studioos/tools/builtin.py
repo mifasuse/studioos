@@ -21,8 +21,10 @@ from . import ebaycrosslister as _ebay  # noqa: F401  (registers EbayCrossLister
 from . import hub as _hub  # noqa: F401  (registers Hub API tools)
 from . import exec as _exec  # noqa: F401  (registers narrow read-only exec.* tools)
 from . import llm as _llm  # noqa: F401  (registers llm.chat)
+from . import nitter as _nitter  # noqa: F401  (registers nitter.search)
 from . import slack as _slack  # noqa: F401  (registers slack.notify)
 from . import telegram as _telegram  # noqa: F401  (registers telegram.notify)
+from . import web_search as _web_search  # noqa: F401  (registers web.search)
 from .base import ToolContext, ToolError, ToolResult
 from .registry import register_tool
 
