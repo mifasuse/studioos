@@ -185,26 +185,87 @@ class OpenAIEmbedder:
         await self._client.aclose()
 
 
+class FallbackEmbedder:
+    """Embedder chain: try primary, fall back to secondary on failure.
+
+    Used to recover from transient OpenAI 429 rate limits by falling
+    through to MiniMax (or Fake) without losing the memory write.
+    """
+
+    def __init__(self, primary: Embedder, fallbacks: list[Embedder]):
+        self.primary = primary
+        self.fallbacks = fallbacks
+        self.dim = primary.dim
+
+    async def embed(self, text: str) -> list[float]:
+        result = await self.embed_batch([text])
+        return result[0]
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        last_exc: Exception | None = None
+        for idx, embedder in enumerate([self.primary, *self.fallbacks]):
+            try:
+                return await embedder.embed_batch(texts)
+            except Exception as exc:
+                last_exc = exc
+                name = type(embedder).__name__
+                log.warning(
+                    "embedder.fallback",
+                    failed=name,
+                    attempt=idx,
+                    error=str(exc)[:150],
+                )
+                continue
+        # All fell through — raise last error
+        if last_exc:
+            raise last_exc
+        return []
+
+
 _singleton: Embedder | None = None
 
 
 def get_embedder() -> Embedder:
-    """Return the configured embedder.
+    """Return the configured embedder with automatic fallback chain.
 
-    Priority:
-      1. MiniMax (if MINIMAX_API_KEY + MINIMAX_GROUP_ID set)
-      2. OpenAI (if OPENAI_API_KEY set)
-      3. FakeEmbedder (zero-config dev/test)
+    Builds a fallback chain: OpenAI (primary) → MiniMax → Fake.
+    Any embedder failure (incl. 429 rate limits) falls through
+    to the next available provider so memory writes don't block.
     """
     global _singleton
     if _singleton is not None:
         return _singleton
+
+    primary: Embedder | None = None
+    fallbacks: list[Embedder] = []
+
     if settings.openai_api_key:
-        log.info("embedder.openai")
-        _singleton = OpenAIEmbedder(api_key=settings.openai_api_key)
-    else:
-        log.info("embedder.fake")
+        primary = OpenAIEmbedder(api_key=settings.openai_api_key)
+        log.info("embedder.primary.openai")
+
+    if settings.minimax_api_key and settings.minimax_group_id:
+        mm = MiniMaxEmbedder(
+            api_key=settings.minimax_api_key,
+            group_id=settings.minimax_group_id,
+            base_url=settings.minimax_base_url or "https://api.minimax.io/v1",
+        )
+        if primary is None:
+            primary = mm
+            log.info("embedder.primary.minimax")
+        else:
+            fallbacks.append(mm)
+            log.info("embedder.fallback.minimax_added")
+
+    # Fake is always the last fallback — memory is never fully blocked
+    fallbacks.append(FakeEmbedder())
+
+    if primary is None:
+        log.info("embedder.fake_only")
         _singleton = FakeEmbedder()
+    elif fallbacks:
+        _singleton = FallbackEmbedder(primary=primary, fallbacks=fallbacks)
+    else:
+        _singleton = primary
     return _singleton
 
 
