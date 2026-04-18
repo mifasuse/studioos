@@ -195,13 +195,20 @@ async def http_post_form(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
 async def memory_search(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     query = args["query"]
     limit = int(args.get("limit", 5))
-    async with session_scope() as session:
-        results = await search_memory(
-            session,
-            query=query,
-            agent_id=ctx.agent_id,
-            studio_id=ctx.studio_id,
-            limit=limit,
+    try:
+        async with session_scope() as session:
+            results = await search_memory(
+                session,
+                query=query,
+                agent_id=ctx.agent_id,
+                studio_id=ctx.studio_id,
+                limit=limit,
+            )
+    except Exception as exc:
+        # Graceful degradation — memory is advisory, not critical.
+        # Rate limits, embedder outages, etc. should not block agent runs.
+        return ToolResult(
+            data={"results": [], "degraded": True, "reason": str(exc)[:200]},
         )
     return ToolResult(
         data={

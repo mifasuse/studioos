@@ -146,14 +146,40 @@ class OpenAIEmbedder:
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        resp = await self._client.post(
-            f"{self.base_url}/embeddings",
-            json={"model": self.model, "input": texts},
-            headers={"Authorization": f"Bearer {self.api_key}"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return [item["embedding"] for item in data["data"]]
+        # Retry on 429 (rate limit) with exponential backoff
+        import asyncio as _asyncio
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                resp = await self._client.post(
+                    f"{self.base_url}/embeddings",
+                    json={"model": self.model, "input": texts},
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                )
+                if resp.status_code == 429:
+                    # Respect Retry-After header, else exponential backoff
+                    retry_after = resp.headers.get("Retry-After")
+                    wait = float(retry_after) if retry_after else (2 ** attempt)
+                    await _asyncio.sleep(min(wait, 10.0))
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                return [item["embedding"] for item in data["data"]]
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                if exc.response.status_code == 429 and attempt < 2:
+                    await _asyncio.sleep(2 ** attempt)
+                    continue
+                raise
+            except (httpx.RequestError, httpx.TimeoutException) as exc:
+                last_exc = exc
+                if attempt < 2:
+                    await _asyncio.sleep(2 ** attempt)
+                    continue
+                raise
+        if last_exc:
+            raise last_exc
+        return []
 
     async def close(self) -> None:
         await self._client.aclose()
