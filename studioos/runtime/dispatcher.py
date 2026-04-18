@@ -83,9 +83,31 @@ async def dispatch_once() -> UUID | None:
             return run_id
 
     # Execute in its own session so state and events commit together
+    from studioos.config import settings as _cfg
+    timeout = float(_cfg.run_timeout_seconds)
+
     async with session_scope() as session:
         try:
-            await execute_run(session, run_id)
+            await asyncio.wait_for(
+                execute_run(session, run_id),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            log.warning(
+                "dispatch.run_timeout",
+                run_id=str(run_id),
+                agent_id=agent_id,
+                timeout_seconds=timeout,
+            )
+            await session.execute(
+                update(AgentRun)
+                .where(AgentRun.id == run_id)
+                .values(
+                    state="timed_out",
+                    ended_at=datetime.now(UTC),
+                    error={"type": "Timeout", "message": f"Run exceeded {timeout}s"},
+                )
+            )
         except RunExecutionError:
             # error already recorded on run
             pass

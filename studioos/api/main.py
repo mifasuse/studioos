@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 
 from studioos import __version__
 from studioos.db import session_scope
@@ -258,6 +258,50 @@ async def prometheus_metrics() -> Response:
 
     body = "\n".join(lines) + "\n"
     return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
+
+
+@app.get("/costs")
+async def cost_summary() -> dict[str, Any]:
+    """Monthly LLM + tool cost summary."""
+    from datetime import UTC, datetime, timedelta
+
+    async with session_scope() as session:
+        now = datetime.now(UTC)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        week_start = now - timedelta(days=7)
+
+        monthly = (
+            await session.execute(
+                select(func.coalesce(func.sum(ToolCall.cost_cents), 0))
+                .where(ToolCall.called_at >= month_start)
+            )
+        ).scalar_one()
+        weekly = (
+            await session.execute(
+                select(func.coalesce(func.sum(ToolCall.cost_cents), 0))
+                .where(ToolCall.called_at >= week_start)
+            )
+        ).scalar_one()
+        by_tool = (
+            await session.execute(
+                select(ToolCall.tool_name, func.sum(ToolCall.cost_cents))
+                .where(ToolCall.called_at >= month_start)
+                .group_by(ToolCall.tool_name)
+                .having(func.sum(ToolCall.cost_cents) > 0)
+                .order_by(func.sum(ToolCall.cost_cents).desc())
+            )
+        ).all()
+
+    return {
+        "monthly_cents": int(monthly),
+        "monthly_usd": round(int(monthly) / 100, 2),
+        "weekly_cents": int(weekly),
+        "weekly_usd": round(int(weekly) / 100, 2),
+        "by_tool": [
+            {"tool": name, "cents": int(cost)}
+            for name, cost in by_tool
+        ],
+    }
 
 
 @app.get("/studios")
