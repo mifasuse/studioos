@@ -54,6 +54,7 @@ class PricingState(TypedDict, total=False):
     pricing_data: dict[str, Any]
     recommendation: dict[str, Any]
     events: list[dict[str, Any]]
+    approvals: list[dict[str, Any]]
     memories: list[dict[str, Any]]
     kpi_updates: list[dict[str, Any]]
     summary: str
@@ -67,15 +68,15 @@ async def node_collect(state: PricingState) -> dict[str, Any]:
     """Fetch Hub API countries, conversion, and mrr_history for the target app."""
     inp = state.get("input") or {}
     task_payload = inp.get("payload") or inp
-    # Try multiple sources for app_id:
-    # 1. Direct in payload (from direct trigger)
-    # 2. In task description (CEO delegation: "quit_smoking fiyat analizi")
-    # 3. First tracked app from goals
-    # 4. Default quit_smoking
+    # Determine which app(s) to analyze:
+    # - Direct trigger with app_id → single app
+    # - CEO delegation with description → extract app name
+    # - Scheduled run → all tracked_apps
     app_id: str = task_payload.get("app_id") or ""
     if not app_id:
         desc = (task_payload.get("description") or task_payload.get("title") or "").lower()
-        for candidate in ("quit_smoking", "sms_forward"):
+        tracked = (state.get("goals") or {}).get("tracked_apps") or []
+        for candidate in tracked:
             if candidate.replace("_", " ") in desc or candidate in desc:
                 app_id = candidate
                 break
@@ -220,13 +221,27 @@ async def node_recommend(state: PricingState) -> dict[str, Any]:
         "idempotency_key": f"pricing:{run_id}:{app_id}",
     }
 
+    # Clean rationale — strip any JSON fences or raw JSON
+    rationale = (recommendation.get("rationale") or "")
+    if rationale.startswith("```") or rationale.startswith("{"):
+        # LLM returned JSON instead of plain text — extract just the text
+        try:
+            import re
+            clean = re.sub(r"```(?:json)?\s*", "", rationale).strip().rstrip("`")
+            parsed_r = json.loads(clean) if clean.startswith("{") else None
+            if isinstance(parsed_r, dict):
+                rationale = parsed_r.get("rationale", str(parsed_r))
+        except (ValueError, TypeError):
+            pass
+    rationale = rationale[:200]
+
     notify_text = (
         f"*App Studio Fiyatlandırma Önerisi — {today}*\n\n"
         f"Uygulama: `{app_id}`\n"
         f"Mevcut fiyat: {recommendation.get('current_price', '—')}\n"
         f"Önerilen fiyat: {recommendation.get('recommended_price', '—')}\n"
-        f"Gerekçe: {(recommendation.get('rationale') or '')[:200]}\n\n"
-        "_Onay için CEO lansmanı bekleniyor._"
+        f"Gerekçe: {rationale}\n\n"
+        "_CEO onayı bekleniyor._"
     )
 
     slack_result = await invoke_from_state(
@@ -242,8 +257,25 @@ async def node_recommend(state: PricingState) -> dict[str, Any]:
         int(state_accum.get("recommendations_total", 0)) + 1
     )
 
+    # Approval gate — CEO must approve pricing changes
+    approvals: list[dict[str, Any]] = []
+    rec_price = recommendation.get("recommended_price", "")
+    if rec_price and rec_price != "—" and rec_price != "N/A":
+        approvals.append({
+            "reason": (
+                f"Pricing: {app_id} fiyat degisikligi — "
+                f"{recommendation.get('current_price', '?')} → {rec_price}"
+            ),
+            "payload": {
+                "app_id": app_id,
+                "recommendation": recommendation,
+            },
+            "expires_in_seconds": 60 * 60 * 24 * 7,  # 7 days
+        })
+
     return {
         "events": [event],
+        "approvals": approvals,
         "memories": [
             {
                 "content": (
@@ -267,7 +299,7 @@ async def node_recommend(state: PricingState) -> dict[str, Any]:
             f"Pricing recommendation for {app_id}: "
             f"{recommendation.get('current_price')} → "
             f"{recommendation.get('recommended_price')} "
-            f"(slack={slack_result.get('status')})"
+            f"(slack={slack_result.get('status')}, approval={'pending' if approvals else 'none'})"
         ),
     }
 
